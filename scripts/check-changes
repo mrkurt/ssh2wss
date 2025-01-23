@@ -151,10 +151,37 @@ function formatCommitHeader(commit: CommitInfo): string {
   ].join("\n");
 }
 
-async function generateReleaseNotes(changes: string): Promise<string | null> {
+function formatCommitForNotes(commit: CommitInfo): string {
+  const date = formatDate(commit.date);
+  const hash = commit.hash.slice(0, 7);
+  const message = commit.message;
+  const changes = commit.changes.map(c => 
+    `  ${c.file}: +${c.added} -${c.removed}`
+  ).join("\n");
+  
+  return [
+    "",
+    `Commit ${hash} - ${date}`,
+    "─".repeat(40),
+    message,
+    "",
+    "Changes:",
+    changes,
+    ""
+  ].join("\n");
+}
+
+async function generateReleaseNotes(commits: CommitInfo[]): Promise<string | null> {
   // @ts-ignore: Deno namespace
   const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
-  if (!apiKey) return null;
+  if (!apiKey) {
+    console.log("⚠️ No ANTHROPIC_API_KEY found, skipping release notes generation");
+    return null;
+  }
+
+  const changes = commits.map(formatCommitForNotes).join("\n");
+  console.log("🤖 Generating release notes with Claude API...");
+  console.log("📝 Using changes:\n", changes);
 
   const response = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -175,7 +202,7 @@ async function generateReleaseNotes(changes: string): Promise<string | null> {
 4. Group similar changes together
 5. Use brief, direct language without marketing speak
 
-Format in markdown with bullet points:
+Here are the changes:
 
 ${changes}`
       }]
@@ -183,12 +210,15 @@ ${changes}`
   });
 
   if (!response.ok) {
-    console.error("Failed to generate release notes:", await response.text());
+    const error = await response.text();
+    console.error("❌ Failed to generate release notes:", error);
     return null;
   }
 
   const data = await response.json();
-  return data.content[0].text;
+  const notes = data.content[0].text;
+  console.log("✅ Generated release notes:\n", notes);
+  return notes;
 }
 
 async function main() {
@@ -245,12 +275,13 @@ async function main() {
     if (totalChanges >= CHANGE_THRESHOLD) {
       console.log("\n✅ Changes exceed threshold - release recommended");
       // If we have an API key, try to generate release notes
-      const notes = await generateReleaseNotes(
-        substantialCommits.map(c => formatCommitHeader(c)).join("\n")
-      );
+      const notes = await generateReleaseNotes(substantialCommits);
       if (notes) {
         // @ts-ignore: Deno namespace
         await Deno.writeTextFile("release_notes.txt", notes);
+        console.log("📝 Release notes written to release_notes.txt");
+      } else {
+        console.log("⚠️ No release notes were generated");
       }
       // @ts-ignore: Deno namespace
       Deno.exit(0);
