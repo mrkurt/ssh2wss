@@ -1,0 +1,102 @@
+name: Release Builder
+
+on:
+  workflow_run:
+    workflows: ["Tests"]  # Run after tests complete
+    types:
+      - completed
+  workflow_dispatch:      # Allow manual trigger
+
+jobs:
+  check-changes:
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    outputs:
+      has_changes: ${{ steps.verify-changes.outputs.has_changes }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Need full history for tags
+      
+      - name: Setup Deno
+        uses: denoland/setup-deno@v1
+        with:
+          deno-version: "2.x"  # Using Deno 2.x
+      
+      - id: verify-changes
+        run: |
+          chmod +x ./scripts/check-changes
+          ./scripts/check-changes && echo "has_changes=true" >> $GITHUB_OUTPUT || echo "has_changes=false" >> $GITHUB_OUTPUT
+
+  build-and-release:
+    needs: check-changes
+    if: needs.check-changes.outputs.has_changes == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history and tags
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+
+      - name: Get dependencies
+        run: go get -v ./...
+
+      - name: Get current version
+        id: version
+        run: |
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.1.0")
+          PATCH=$(echo $LAST_TAG | cut -d. -f3)
+          NEW_PATCH=$((PATCH + 1))
+          NEW_TAG="0.1.$NEW_PATCH"
+          echo "version=$NEW_TAG" >> $GITHUB_OUTPUT
+
+      - name: Build for multiple platforms
+        run: |
+          GOOS=linux GOARCH=amd64 go build -o ssh2wss-linux-amd64
+          GOOS=darwin GOARCH=amd64 go build -o ssh2wss-darwin-amd64
+          GOOS=darwin GOARCH=arm64 go build -o ssh2wss-darwin-arm64
+
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          release_name: Release v${{ steps.version.outputs.version }}
+          draft: false
+          prerelease: true
+
+      - name: Upload Linux AMD64 Binary
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./ssh2wss-linux-amd64
+          asset_name: ssh2wss-linux-amd64
+          asset_content_type: application/octet-stream
+
+      - name: Upload Darwin AMD64 Binary
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./ssh2wss-darwin-amd64
+          asset_name: ssh2wss-darwin-amd64
+          asset_content_type: application/octet-stream
+
+      - name: Upload Darwin ARM64 Binary
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./ssh2wss-darwin-arm64
+          asset_name: ssh2wss-darwin-arm64
+          asset_content_type: application/octet-stream 
