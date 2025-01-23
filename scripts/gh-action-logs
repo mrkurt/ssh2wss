@@ -1,14 +1,43 @@
 #!/usr/bin/env -S deno run --allow-run
 
-async function getLatestRunId(): Promise<string> {
+// @ts-ignore: Deno module resolution
+import { Command } from "https://deno.land/std@0.217.0/cli/mod.ts";
+
+interface RunInfo {
+  databaseId: string;
+  status: string;
+  conclusion: string | null;
+  displayTitle: string;
+  createdAt: string;
+  headBranch: string;
+}
+
+const STATUS_EMOJI = {
+  queued: "⏳",
+  in_progress: "🏃",
+  completed: "✅",
+  failure: "❌",
+  success: "✨",
+  cancelled: "🚫",
+  skipped: "⏭️",
+} as const;
+
+async function getActiveRuns(): Promise<RunInfo[]> {
+  // @ts-ignore: Deno namespace
   const process = new Deno.Command("gh", {
-    args: ["run", "list", "-L", "1", "--json", "databaseId,status,createdAt", "-q", ".[0]"],
+    args: [
+      "run", 
+      "list", 
+      "-L", "10", 
+      "--json", "databaseId,status,conclusion,displayTitle,createdAt,headBranch",
+    ],
   });
   const { stdout } = await process.output();
-  return new TextDecoder().decode(stdout).trim();
+  return JSON.parse(new TextDecoder().decode(stdout).trim());
 }
 
 async function getRunLogs(runId: string): Promise<void> {
+  // @ts-ignore: Deno namespace
   const process = new Deno.Command("gh", {
     args: ["run", "view", runId, "--log"],
     stdout: "piped",
@@ -27,67 +56,64 @@ async function getRunLogs(runId: string): Promise<void> {
   }
 }
 
-async function watchRun(runId: string): Promise<void> {
-  let lastStatus = "";
+async function watchRun(run: RunInfo): Promise<void> {
+  let lastStatus = run.status;
+  console.log(`${STATUS_EMOJI[run.status as keyof typeof STATUS_EMOJI]} [${run.headBranch}] ${run.displayTitle}`);
   
   while (true) {
+    // @ts-ignore: Deno namespace
     const process = new Deno.Command("gh", {
-      args: ["run", "view", runId, "--json", "status,conclusion", "-q", "."],
+      args: ["run", "view", run.databaseId, "--json", "status,conclusion", "-q", "."],
     });
     const { stdout } = await process.output();
     const result = JSON.parse(new TextDecoder().decode(stdout));
     
     if (result.status !== lastStatus) {
-      console.log(`Status: ${result.status}`);
+      const emoji = STATUS_EMOJI[result.status as keyof typeof STATUS_EMOJI] || "❓";
+      console.log(`${emoji} [${run.headBranch}] ${result.status}`);
       lastStatus = result.status;
       
       if (result.status === "completed") {
-        console.log(`Conclusion: ${result.conclusion}`);
+        const conclusionEmoji = STATUS_EMOJI[result.conclusion as keyof typeof STATUS_EMOJI] || "❓";
+        console.log(`${conclusionEmoji} [${run.headBranch}] Conclusion: ${result.conclusion}`);
         if (result.conclusion !== "success") {
-          await getRunLogs(runId);
+          await getRunLogs(run.databaseId);
         }
         break;
       }
     }
     
-    // Wait 2 seconds before checking again
     await new Promise(resolve => setTimeout(resolve, 2000));
   }
 }
 
-async function waitForNewRun(lastRunInfo: any): Promise<string> {
-  console.log("Waiting for new run to start...");
+async function waitForActiveRuns(): Promise<RunInfo[]> {
   while (true) {
-    const newRunInfo = JSON.parse(await getLatestRunId());
-    if (newRunInfo.createdAt > lastRunInfo.createdAt) {
-      return newRunInfo.databaseId;
+    const runs = await getActiveRuns();
+    const activeRuns = runs.filter(run => run.status !== "completed");
+    if (activeRuns.length > 0) {
+      return activeRuns;
     }
+    console.log("⏳ Waiting for active runs...");
     await new Promise(resolve => setTimeout(resolve, 2000));
   }
 }
 
 async function main() {
   try {
-    const args = Deno.args;
-    const shouldWatch = args.includes("--watch");
+    const activeRuns = await waitForActiveRuns();
+    console.log(`Found ${activeRuns.length} active run(s):`);
     
-    const runInfo = JSON.parse(await getLatestRunId());
-    console.log(`Latest run ID: ${runInfo.databaseId}`);
-    
-    if (shouldWatch) {
-      const runId = await waitForNewRun(runInfo);
-      console.log(`New run started with ID: ${runId}`);
-      console.log("Watching run progress...");
-      await watchRun(runId);
-    } else {
-      await getRunLogs(runInfo.databaseId);
-    }
+    // Watch all active runs concurrently
+    await Promise.all(activeRuns.map(run => watchRun(run)));
   } catch (error) {
     console.error("Error:", error.message);
+    // @ts-ignore: Deno namespace
     Deno.exit(1);
   }
 }
 
+// @ts-ignore: Deno import.meta
 if (import.meta.main) {
   main();
 } 
