@@ -7,6 +7,9 @@ on:
     branches: [ main ]
   workflow_dispatch:  # Allow manual trigger
 
+permissions:
+  contents: write  # Needed for creating releases
+
 jobs:
   test:
     uses: ./.github/workflows/test.yml
@@ -18,6 +21,8 @@ jobs:
   release:
     needs: check-changes
     if: needs.check-changes.outputs.has_changes == 'true'
+    permissions:
+      contents: write  # Explicitly pass write permission to release workflow
     uses: ./.github/workflows/release.yml
     with:
       release_notes: ${{ needs.check-changes.outputs.release_notes }} 
