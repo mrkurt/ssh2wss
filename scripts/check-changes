@@ -1,62 +1,266 @@
-#!/usr/bin/env -S deno run --allow-run
+#!/usr/bin/env -S deno run --allow-run --allow-write --allow-env --allow-net
 
+interface FileChanges {
+  file: string;
+  added: number;
+  removed: number;
+}
+
+interface CommitInfo {
+  hash: string;
+  message: string;
+  date: string;
+  changes: FileChanges[];
+  totalChanges: number;
+}
+
+interface GitCommit {
+  commit: string;
+  subject: string;
+  authorDate: string;
+}
+
+// Threshold for substantial changes (we can adjust this)
+const CHANGE_THRESHOLD = 20; // Total lines changed (added + removed)
+
+// Parse command line arguments
 // @ts-ignore: Deno namespace
-async function getLastReleaseTag(): Promise<string> {
-  const process = new Deno.Command("git", {
-    args: ["describe", "--tags", "--abbrev=0"],
-    stderr: "null",
-  });
-  try {
-    const { stdout } = await process.output();
-    return new TextDecoder().decode(stdout).trim() || "v0.1.0";
-  } catch {
-    return "v0.1.0"; // Default if no tags exist
+const startCommit = Deno.args[0]; // Optional starting commit
+
+// Helper function to run commands and handle errors
+// @ts-ignore: Deno namespace
+async function runCommand(args: string[]): Promise<string> {
+  // @ts-ignore: Deno namespace
+  const process = new Deno.Command("git", { args, stderr: "piped" });
+  const { stdout, stderr } = await process.output();
+  const stderrText = new TextDecoder().decode(stderr);
+  if (stderrText) {
+    throw new Error(`Git command failed: ${stderrText.trim()}`);
   }
+  return new TextDecoder().decode(stdout).trim();
 }
 
 // @ts-ignore: Deno namespace
-async function getChangedFiles(since: string): Promise<string[]> {
-  const process = new Deno.Command("git", {
-    args: ["diff", "--name-only", since],
-  });
-  const { stdout } = await process.output();
-  return new TextDecoder().decode(stdout).trim().split("\n");
+async function getCommitHistory(since: string | null): Promise<CommitInfo[]> {
+  // Get commit list with metadata in JSON format
+  const listArgs = [
+    "log",
+    "--reverse",
+    "--format=format:{"
+      + "\"commit\":\"%H\","
+      + "\"subject\":\"%s\","
+      + "\"authorDate\":\"%aI\""
+    + "}%x1E", // Using ASCII Record Separator as delimiter
+    since ? `${since}..HEAD` : "HEAD"
+  ];
+  
+  const output = await runCommand(listArgs);
+  const commits: CommitInfo[] = [];
+  
+  // Parse the JSON objects
+  const commitJsons = output.split('\x1E')  // Split on Record Separator
+    .map(s => s.trim())
+    .filter(s => s)
+    .map(s => JSON.parse(s) as GitCommit);
+  
+  for (const commitData of commitJsons) {
+    // Get numstat for each commit
+    const statsArgs = ["show", "--format=", "--numstat", commitData.commit];
+    const statsOutput = await runCommand(statsArgs);
+    const changes: FileChanges[] = [];
+    
+    // Parse numstat output
+    for (const line of statsOutput.split('\n')) {
+      if (!line.trim()) continue;
+      
+      const [added, removed, file] = line.split('\t');
+      if (file && isSubstantialFile(file)) {
+        changes.push({
+          file,
+          added: parseInt(added) || 0,
+          removed: parseInt(removed) || 0
+        });
+      }
+    }
+    
+    const totalChanges = changes.reduce((sum, change) => 
+      sum + change.added + change.removed, 0);
+    
+    commits.push({
+      hash: commitData.commit,
+      message: commitData.subject,
+      date: commitData.authorDate,
+      changes,
+      totalChanges
+    });
+  }
+  
+  return commits;
 }
 
 function isSubstantialFile(file: string): boolean {
-  // Ignore test files, documentation, and workflow files
+  // Skip test files, documentation, and utility files
   if (
-    file.endsWith("_test.go") ||
-    file.endsWith(".md") ||
-    file.startsWith(".github/") ||
-    file.startsWith("docs/") ||
-    file === ""
+    file.endsWith("_test.go") ||     // Test files
+    file.endsWith(".md") ||          // Documentation
+    file.startsWith(".github/") ||    // GitHub configuration
+    file.startsWith("docs/") ||       // Documentation directory
+    file.startsWith("scripts/") ||    // Utility scripts
+    file.endsWith(".log") ||         // Log files
+    file.startsWith(".") ||          // Hidden files and config
+    file === "" ||
+    file === "go.sum"                // Go dependency checksums
   ) {
     return false;
   }
-  return true;
+
+  // Consider all other Go files substantial
+  return file.endsWith(".go");
+}
+
+function formatDate(isoDate: string): string {
+  try {
+    const date = new Date(isoDate);
+    if (isNaN(date.getTime())) {
+      return "Unknown Date";
+    }
+    return new Intl.DateTimeFormat('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: 'numeric',
+      hour12: true
+    }).format(date);
+  } catch {
+    return "Unknown Date";
+  }
+}
+
+function formatCommitHeader(commit: CommitInfo): string {
+  const date = formatDate(commit.date);
+  const hash = commit.hash.slice(0, 7);
+  const message = commit.message;
+  
+  return [
+    "",
+    `Commit ${hash} - ${date}`,
+    "─".repeat(40),
+    message,
+    ""
+  ].join("\n");
+}
+
+async function generateReleaseNotes(changes: string): Promise<string | null> {
+  // @ts-ignore: Deno namespace
+  const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
+  if (!apiKey) return null;
+
+  const response = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01"
+    },
+    body: JSON.stringify({
+      model: "claude-3-5-sonnet-20241022",
+      max_tokens: 1024,
+      messages: [{
+        role: "user",
+        content: `Write concise, matter-of-fact release notes from these git changes. Focus on:
+1. User-facing changes with clear impact
+2. Important technical updates or dependencies
+3. Link to GitHub issues/PRs if numbers are mentioned (format: #123)
+4. Group similar changes together
+5. Use brief, direct language without marketing speak
+
+Format in markdown with bullet points:
+
+${changes}`
+      }]
+    })
+  });
+
+  if (!response.ok) {
+    console.error("Failed to generate release notes:", await response.text());
+    return null;
+  }
+
+  const data = await response.json();
+  return data.content[0].text;
 }
 
 async function main() {
   try {
-    const lastTag = await getLastReleaseTag();
-    const changedFiles = await getChangedFiles(lastTag);
-    const substantialChanges = changedFiles.filter(isSubstantialFile);
+    if (!startCommit) {
+      throw new Error("Please provide a starting commit hash");
+    }
+
+    const commits = await getCommitHistory(startCommit);
+    const substantialCommits = commits.filter(c => c.changes.length > 0);
     
-    if (substantialChanges.length > 0) {
-      console.log("Substantial changes found in:");
-      substantialChanges.forEach(file => console.log(`  - ${file}`));
-      // Exit with 0 to indicate changes found
+    console.log("\n📜 Commit History Analysis:");
+    console.log("-------------------------");
+    console.log(`📦 Changes since: ${startCommit}`);
+    console.log(`📊 Found ${commits.length} total commits, ${substantialCommits.length} with substantial changes`);
+    
+    let totalChanges = 0;
+    let maxChanges = 0;
+    let minChanges = Number.MAX_SAFE_INTEGER;
+    
+    console.log("\n📝 Commits:");
+    for (const commit of commits) {
+      if (commit.changes.length === 0) {
+        console.log(`\n${commit.hash.slice(0, 7)} - ${commit.message}`);
+        console.log("No substantial changes");
+        continue;
+      }
+
+      console.log(formatCommitHeader(commit));
+      console.log(`Changes: ${commit.totalChanges} lines`);
+      commit.changes.forEach(change => 
+        console.log(`• ${change.file}: +${change.added} -${change.removed}`)
+      );
+      
+      totalChanges += commit.totalChanges;
+      maxChanges = Math.max(maxChanges, commit.totalChanges);
+      minChanges = Math.min(minChanges, commit.totalChanges);
+    }
+    
+    if (substantialCommits.length === 0) {
+      console.log("\nNo substantial changes found in any commits");
+      // @ts-ignore: Deno namespace
+      Deno.exit(1);
+    }
+    
+    console.log("\n📊 Statistics:");
+    console.log(`   Total commits analyzed: ${commits.length}`);
+    console.log(`   Commits with substantial changes: ${substantialCommits.length}`);
+    console.log(`   Total lines changed: ${totalChanges}`);
+    console.log(`   Average changes per substantial commit: ${Math.round(totalChanges / substantialCommits.length)}`);
+    console.log(`   Largest commit: ${maxChanges} lines`);
+    console.log(`   Smallest substantial commit: ${minChanges} lines`);
+    
+    if (totalChanges >= CHANGE_THRESHOLD) {
+      console.log("\n✅ Changes exceed threshold - release recommended");
+      // If we have an API key, try to generate release notes
+      const notes = await generateReleaseNotes(
+        substantialCommits.map(c => formatCommitHeader(c)).join("\n")
+      );
+      if (notes) {
+        // @ts-ignore: Deno namespace
+        await Deno.writeTextFile("release_notes.txt", notes);
+      }
       // @ts-ignore: Deno namespace
       Deno.exit(0);
     } else {
-      console.log("No substantial changes found since", lastTag);
-      // Exit with 1 to indicate no changes
+      console.log("\n⚠️  Changes below threshold - release not recommended");
       // @ts-ignore: Deno namespace
       Deno.exit(1);
     }
   } catch (error) {
-    console.error("Error:", error.message);
+    console.error("\n❌ Error:", error.message);
     // @ts-ignore: Deno namespace
     Deno.exit(1);
   }
