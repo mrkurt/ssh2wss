@@ -319,8 +319,7 @@ func TestWindowResize(t *testing.T) {
 		"-o", "UserKnownHostsFile="+knownHostsFile,
 		"-o", "LogLevel=QUIET", // Suppress warnings and connection messages
 		"localhost",
-		// Use tput which is more reliable than stty for getting terminal size
-		"tput lines && tput cols")
+		"tput -T xterm-256color lines && tput -T xterm-256color cols") // Use -T flag instead of TERM env var
 
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
