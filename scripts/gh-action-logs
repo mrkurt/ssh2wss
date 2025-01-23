@@ -2,7 +2,7 @@
 
 async function getLatestRunId(): Promise<string> {
   const process = new Deno.Command("gh", {
-    args: ["run", "list", "-L", "1", "--json", "databaseId,status", "-q", ".[0]"],
+    args: ["run", "list", "-L", "1", "--json", "databaseId,status,createdAt", "-q", ".[0]"],
   });
   const { stdout } = await process.output();
   return new TextDecoder().decode(stdout).trim();
@@ -55,6 +55,17 @@ async function watchRun(runId: string): Promise<void> {
   }
 }
 
+async function waitForNewRun(lastRunInfo: any): Promise<string> {
+  console.log("Waiting for new run to start...");
+  while (true) {
+    const newRunInfo = JSON.parse(await getLatestRunId());
+    if (newRunInfo.createdAt > lastRunInfo.createdAt) {
+      return newRunInfo.databaseId;
+    }
+    await new Promise(resolve => setTimeout(resolve, 2000));
+  }
+}
+
 async function main() {
   try {
     const args = Deno.args;
@@ -64,8 +75,10 @@ async function main() {
     console.log(`Latest run ID: ${runInfo.databaseId}`);
     
     if (shouldWatch) {
+      const runId = await waitForNewRun(runInfo);
+      console.log(`New run started with ID: ${runId}`);
       console.log("Watching run progress...");
-      await watchRun(runInfo.databaseId);
+      await watchRun(runId);
     } else {
       await getRunLogs(runInfo.databaseId);
     }
