@@ -1,36 +1,10 @@
-name: Release Builder
+name: Release
 
 on:
-  workflow_run:
-    workflows: ["Tests"]  # Run after tests complete
-    types:
-      - completed
-  workflow_dispatch:      # Allow manual trigger
+  workflow_call:  # Makes this workflow reusable
 
 jobs:
-  check-changes:
-    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
-    runs-on: ubuntu-latest
-    outputs:
-      has_changes: ${{ steps.verify-changes.outputs.has_changes }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # Need full history for tags
-      
-      - name: Setup Deno
-        uses: denoland/setup-deno@v1
-        with:
-          deno-version: "2.x"  # Using Deno 2.x
-      
-      - id: verify-changes
-        run: |
-          chmod +x ./scripts/check-changes
-          ./scripts/check-changes && echo "has_changes=true" >> $GITHUB_OUTPUT || echo "has_changes=false" >> $GITHUB_OUTPUT
-
-  build-and-release:
-    needs: check-changes
-    if: needs.check-changes.outputs.has_changes == 'true'
+  release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
