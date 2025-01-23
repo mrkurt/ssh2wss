@@ -4,7 +4,12 @@ A secure bridge that allows SSH connections to be forwarded over WebSocket, with
 
 ## Features
 
-- SSH server that accepts local connections
+- Full-featured SSH server implementation (no system sshd required)
+  * Interactive shell with PTY support
+  * Window resizing
+  * Environment variables
+  * Non-interactive command execution
+  * Uses your default shell (zsh, bash, etc.)
 - WebSocket server with Bearer token authentication
 - Command execution and interactive shell support
 - Secure communication with SSH encryption
@@ -12,20 +17,30 @@ A secure bridge that allows SSH connections to be forwarded over WebSocket, with
 ## Architecture
 
 ```mermaid
-graph LR
+graph TB
     subgraph "Local Machine"
-        SSH[SSH Client] --> |localhost:2222| Bridge[SSH Server]
-        Bridge --> |Forwards| WS[WebSocket Client]
+        SSH[SSH Client]
+        Bridge[SSH Server]
+        WS[WebSocket Client]
+        
+        SSH --> |localhost:2222| Bridge
+        Bridge --> |Forwards| WS
     end
 
     subgraph "Internet"
-        WS --> |wss://| PROXY[HTTP/HTTPS Proxy]
-        PROXY --> |wss://| FW[Firewall/Load Balancer]
+        PROXY[HTTP/HTTPS Proxy]
+        FW[Firewall/Load Balancer]
+        
+        WS --> |wss://| PROXY
+        PROXY --> |wss://| FW
     end
 
     subgraph "Remote Server"
-        FW --> |ws://localhost:8081| WSS[WebSocket Server]
-        WSS --> |Executes| CMD[Commands/Shell]
+        WSS[WebSocket Server]
+        CMD[Commands/Shell]
+        
+        FW --> |ws://localhost:8081| WSS
+        WSS --> |Executes| CMD
     end
 
     style Internet fill:#f5f5f5,stroke:#666,stroke-width:2px
@@ -213,7 +228,3 @@ go run main.go -debug
 # Test WebSocket connection
 wscat -c ws://localhost:8081 -H "Authorization: Bearer $WSS_AUTH_TOKEN"
 ```
-
-## License
-
-MIT 
