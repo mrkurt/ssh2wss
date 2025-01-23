@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,12 +21,35 @@ import (
 	"golang.org/x/net/websocket"
 )
 
+// Default ports used by the actual tool
 const (
-	testSSHPort = 2222
-	testWSPort  = 8081
+	DefaultSSHPort = 2222
+	DefaultWSPort  = 8081
 )
 
+// getFreePorts returns available ports for SSH and WebSocket servers
+func getFreePorts(t *testing.T) (sshPort, wsPort int) {
+	sshListener, err := net.Listen("tcp", "localhost:0")
+	if err != nil {
+		t.Fatalf("Failed to get free port for SSH: %v", err)
+	}
+	defer sshListener.Close()
+
+	wsListener, err := net.Listen("tcp", "localhost:0")
+	if err != nil {
+		t.Fatalf("Failed to get free port for WebSocket: %v", err)
+	}
+	defer wsListener.Close()
+
+	sshPort = sshListener.Addr().(*net.TCPAddr).Port
+	wsPort = wsListener.Addr().(*net.TCPAddr).Port
+	return sshPort, wsPort
+}
+
 func TestBridge(t *testing.T) {
+	// Get dynamic ports for testing
+	testSSHPort, testWSPort := getFreePorts(t)
+
 	// Create context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -58,7 +82,7 @@ func TestBridge(t *testing.T) {
 		t.Fatalf("Failed to read host key: %v", err)
 	}
 
-	// Start the bridge
+	// Start the bridge with dynamic ports
 	bridge, err := server.NewBridge(testSSHPort, testWSPort, hostKey)
 	if err != nil {
 		t.Fatalf("Failed to create bridge: %v", err)
@@ -156,7 +180,7 @@ func TestBridge(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				sshCmd := exec.CommandContext(ctx, "ssh",
-					"-p", "2222",
+					"-p", fmt.Sprintf("%d", testSSHPort),
 					"-o", "StrictHostKeyChecking=no",
 					"-o", "UserKnownHostsFile="+knownHostsFile,
 					"-o", "LogLevel=ERROR",
@@ -180,7 +204,7 @@ func TestBridge(t *testing.T) {
 		// Start SSH in interactive mode
 		sshCmd := exec.CommandContext(ctx, "ssh",
 			"-tt",
-			"-p", "2222",
+			"-p", fmt.Sprintf("%d", testSSHPort),
 			"-o", "StrictHostKeyChecking=no",
 			"-o", "UserKnownHostsFile="+knownHostsFile,
 			"-o", "LogLevel=ERROR",
