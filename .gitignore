@@ -19,4 +19,7 @@ go.work
 
 # SSH keys
 *.key
-*.key.pub 
+*.key.pub
+
+dev.log
+DEVELOPMENT.md 
