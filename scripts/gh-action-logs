@@ -100,7 +100,7 @@ async function getRunLogs(runId: string): Promise<void> {
 
 async function watchRun(run: RunInfo): Promise<void> {
   let lastStatus = run.status;
-  console.log(`${STATUS_EMOJI[run.status as keyof typeof STATUS_EMOJI]} [${run.headBranch}] ${run.name}`);
+  console.log(`${STATUS_EMOJI[run.status as keyof typeof STATUS_EMOJI]} [${run.headBranch}] ${run.name} (#${run.databaseId})`);
   
   while (true) {
     try {
@@ -126,12 +126,12 @@ async function watchRun(run: RunInfo): Promise<void> {
       
       if (result.status !== lastStatus) {
         const emoji = STATUS_EMOJI[result.status as keyof typeof STATUS_EMOJI] || "❓";
-        console.log(`${emoji} [${run.headBranch}] ${result.status}`);
+        console.log(`${emoji} [${run.headBranch}] ${result.status} (#${run.databaseId})`);
         lastStatus = result.status;
         
         if (result.status === "completed") {
           const conclusionEmoji = STATUS_EMOJI[result.conclusion as keyof typeof STATUS_EMOJI] || "❓";
-          console.log(`${conclusionEmoji} [${run.headBranch}] Conclusion: ${result.conclusion}`);
+          console.log(`${conclusionEmoji} [${run.headBranch}] Conclusion: ${result.conclusion} (#${run.databaseId})`);
           if (result.conclusion !== "success") {
             await getRunLogs(run.databaseId);
           }
