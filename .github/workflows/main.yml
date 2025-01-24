@@ -24,12 +24,11 @@ jobs:
 
   windows-test:
     name: ":windows: Test"
-    needs: windows-build
     uses: ./.github/workflows/test-windows.yml
 
   check_changes:
     name: "🔍 Check Changes"
-    needs: [linux-test, windows-test]
+    needs: [linux-test, windows-test, windows-build]
     uses: ./.github/workflows/check-changes.yml
     secrets: inherit
 
