@@ -10,7 +10,6 @@ import (
 	"sync"
 	"syscall"
 	"time"
-	"unsafe"
 
 	"github.com/creack/pty"
 	"golang.org/x/crypto/ssh"
@@ -153,32 +152,6 @@ func (s *SSHServer) handleChannelRequests(channel ssh.Channel, requests <-chan *
 				}
 				defer ptmx.Close()
 
-				// Handle window size changes
-				go func() {
-					for req := range requests {
-						if req.Type == "window-change" {
-							w := &struct {
-								Width  uint32
-								Height uint32
-								X      uint32
-								Y      uint32
-							}{}
-							if err := ssh.Unmarshal(req.Payload, w); err != nil {
-								log.Printf("Failed to parse window-change payload: %v", err)
-								continue
-							}
-							if err := pty.Setsize(ptmx, &pty.Winsize{
-								Rows: uint16(w.Height),
-								Cols: uint16(w.Width),
-								X:    uint16(w.X),
-								Y:    uint16(w.Y),
-							}); err != nil {
-								log.Printf("Failed to set window size: %v", err)
-							}
-						}
-					}
-				}()
-
 				// Copy PTY input/output
 				go func() {
 					io.Copy(ptmx, channel)
@@ -235,7 +208,9 @@ func (s *SSHServer) handleChannelRequests(channel ssh.Channel, requests <-chan *
 				}{}
 				if err := ssh.Unmarshal(req.Payload, &winChReq); err == nil {
 					log.Printf("Window size changed: %dx%d", winChReq.Width, winChReq.Height)
-					setTerminalSize(os.Stdout, int(winChReq.Width), int(winChReq.Height))
+					if err := setWinsize(os.Stdout, int(winChReq.Width), int(winChReq.Height)); err != nil {
+						log.Printf("Failed to set window size: %v", err)
+					}
 					ok = true
 				}
 			}
@@ -350,17 +325,4 @@ func (s *SSHServer) handleShell(channel ssh.Channel, cmd *exec.Cmd) {
 	case <-time.After(100 * time.Millisecond):
 		log.Printf("Copy timeout, closing channel")
 	}
-}
-
-func setTerminalSize(f *os.File, w, h int) {
-	ws := struct {
-		rows    uint16
-		cols    uint16
-		xpixels uint16
-		ypixels uint16
-	}{
-		rows: uint16(h),
-		cols: uint16(w),
-	}
-	syscall.Syscall(syscall.SYS_IOCTL, f.Fd(), uintptr(syscall.TIOCSWINSZ), uintptr(unsafe.Pointer(&ws)))
 }
