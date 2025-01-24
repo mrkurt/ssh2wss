@@ -41,9 +41,12 @@ jobs:
             echo "has_changes=true" >> $GITHUB_OUTPUT
             # The script will only output release notes if ANTHROPIC_API_KEY is set
             if [ -n "$ANTHROPIC_API_KEY" ] && [ -f "release_notes.txt" ]; then
-              echo "release_notes<<RELEASE_NOTES_DELIMITER" >> $GITHUB_OUTPUT
-              cat release_notes.txt >> $GITHUB_OUTPUT
-              echo "RELEASE_NOTES_DELIMITER" >> $GITHUB_OUTPUT
+              {
+                echo "release_notes<<EOF"
+                cat release_notes.txt
+                echo "" # Ensure there's a newline before EOF
+                echo "EOF"
+              } >> $GITHUB_OUTPUT
             fi
           else
             echo "has_changes=false" >> $GITHUB_OUTPUT
