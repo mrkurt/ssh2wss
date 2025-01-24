@@ -1,15 +1,13 @@
-name: Build
+name: Windows Build
 
 on:
   workflow_call:  # Makes this workflow reusable 
 
 jobs:
   build:
-    timeout-minutes: 5  # Add timeout of 5 minutes
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+    name: ":windows: Build"
+    runs-on: windows-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
         with:

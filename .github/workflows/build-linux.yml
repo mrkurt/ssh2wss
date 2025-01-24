@@ -1,0 +1,23 @@
+name: Linux Build
+
+on:
+  workflow_call:  # Makes this workflow reusable 
+
+jobs:
+  build:
+    name: ":linux: Build"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history and tags
+
+      - uses: actions/setup-go@v4
+        with:
+          go-version: '1.22'
+
+      - name: Build
+        run: go build -v ./...
+        env:
+          CGO_ENABLED: "1"  # Enable CGO for native builds 

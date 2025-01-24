@@ -1,0 +1,23 @@
+name: Windows Test
+
+on:
+  workflow_call:  # Makes this workflow reusable 
+
+jobs:
+  test:
+    name: ":windows: Test"
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history and tags
+
+      - uses: actions/setup-go@v4
+        with:
+          go-version: '1.22'
+
+      - name: Test
+        run: go test -v ./...
+        env:
+          GO_TEST_STREAM_OUTPUT: "1" 

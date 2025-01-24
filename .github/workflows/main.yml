@@ -9,23 +9,32 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    name: 🔨 Build
-    uses: ./.github/workflows/build.yml
+  linux-build:
+    name: ":linux: Build"
+    uses: ./.github/workflows/build-linux.yml
 
-  test:
-    name: 🧪 Test
-    needs: build
-    uses: ./.github/workflows/test.yml
+  linux-test:
+    name: ":linux: Test"
+    needs: linux-build
+    uses: ./.github/workflows/test-linux.yml
+
+  windows-build:
+    name: ":windows: Build"
+    uses: ./.github/workflows/build-windows.yml
+
+  windows-test:
+    name: ":windows: Test"
+    needs: windows-build
+    uses: ./.github/workflows/test-windows.yml
 
   check_changes:
-    name: 🔍 Check Changes
-    needs: test
+    name: "🔍 Check Changes"
+    needs: [linux-test, windows-test]
     uses: ./.github/workflows/check-changes.yml
     secrets: inherit
 
   release:
-    name: 🚀 Release
+    name: "🚀 Release"
     needs: check_changes
     if: |
       github.ref == 'refs/heads/main' && 
@@ -37,7 +46,7 @@ jobs:
       release_notes: ${{ needs.check-changes.outputs.release_notes }}
 
   would_release:
-    name: 📝 Would Release
+    name: "📝 Would Release"
     needs: check_changes
     if: |
       github.ref != 'refs/heads/main' && 
