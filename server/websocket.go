@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log"
@@ -29,11 +30,23 @@ func NewWebSocketServer(port int) *WebSocketServer {
 }
 
 // Start starts the WebSocket server
-func (s *WebSocketServer) Start() error {
-	http.Handle("/", s.withAuth(s.handler))
-	addr := fmt.Sprintf(":%d", s.port)
+func (s *WebSocketServer) Start(ctx context.Context) error {
+	server := &http.Server{
+		Addr:    fmt.Sprintf(":%d", s.port),
+		Handler: s.withAuth(s.handler),
+	}
+
+	// Handle graceful shutdown
+	go func() {
+		<-ctx.Done()
+		server.Shutdown(context.Background())
+	}()
+
 	log.Printf("WebSocket server listening on port %d", s.port)
-	return http.ListenAndServe(addr, nil)
+	if err := server.ListenAndServe(); err != http.ErrServerClosed {
+		return err
+	}
+	return nil
 }
 
 // handleConnection handles an authenticated WebSocket connection

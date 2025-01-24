@@ -1,6 +1,8 @@
 package server
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"log"
 )
@@ -9,6 +11,8 @@ import (
 type Bridge struct {
 	sshServer *SSHServer
 	wsServer  *WebSocketServer
+	ctx       context.Context
+	cancel    context.CancelFunc
 }
 
 // NewBridge creates a new bridge with the given ports and host key
@@ -19,10 +23,13 @@ func NewBridge(sshPort, wsPort int, hostKey []byte) (*Bridge, error) {
 	}
 
 	wsServer := NewWebSocketServer(wsPort)
+	ctx, cancel := context.WithCancel(context.Background())
 
 	return &Bridge{
 		sshServer: sshServer,
 		wsServer:  wsServer,
+		ctx:       ctx,
+		cancel:    cancel,
 	}, nil
 }
 
@@ -30,11 +37,16 @@ func NewBridge(sshPort, wsPort int, hostKey []byte) (*Bridge, error) {
 func (b *Bridge) Start() error {
 	// Start WebSocket server in a goroutine
 	go func() {
-		if err := b.wsServer.Start(); err != nil {
+		if err := b.wsServer.Start(b.ctx); err != nil && !errors.Is(err, context.Canceled) {
 			log.Printf("WebSocket server failed: %v", err)
 		}
 	}()
 
 	// Start SSH server (blocking)
-	return b.sshServer.Start()
+	return b.sshServer.Start(b.ctx)
+}
+
+// Stop gracefully shuts down both servers
+func (b *Bridge) Stop() {
+	b.cancel()
 }

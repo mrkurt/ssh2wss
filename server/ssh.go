@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log"
@@ -39,7 +40,7 @@ func NewSSHServer(port int, hostKey []byte) (*SSHServer, error) {
 }
 
 // Start starts the SSH server
-func (s *SSHServer) Start() error {
+func (s *SSHServer) Start(ctx context.Context) error {
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", s.port))
 	if err != nil {
 		return fmt.Errorf("failed to listen on port %d: %v", s.port, err)
@@ -48,11 +49,24 @@ func (s *SSHServer) Start() error {
 
 	log.Printf("SSH server listening on port %d", s.port)
 
+	// Create a channel to signal shutdown
+	shutdown := make(chan struct{})
+	go func() {
+		<-ctx.Done()
+		listener.Close()
+		close(shutdown)
+	}()
+
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			log.Printf("Failed to accept connection: %v", err)
-			continue
+			select {
+			case <-shutdown:
+				return nil // Clean shutdown
+			default:
+				log.Printf("Failed to accept connection: %v", err)
+				continue
+			}
 		}
 
 		go s.handleConnection(conn)
