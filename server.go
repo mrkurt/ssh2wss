@@ -5,9 +5,13 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"ssh2wss/server"
+	"os"
+	"os/exec"
+	"syscall"
+	"unsafe"
 
 	"golang.org/x/net/websocket"
+	"golang.org/x/term"
 )
 
 type TerminalServer struct {
@@ -24,18 +28,56 @@ func NewTerminalServer(port int, cert, key string) *TerminalServer {
 	}
 }
 
+type winsize struct {
+	rows    uint16
+	cols    uint16
+	xpixels uint16
+	ypixels uint16
+}
+
+func setWinsize(f *os.File, w, h int) {
+	ws := &winsize{
+		rows: uint16(h),
+		cols: uint16(w),
+	}
+	syscall.Syscall(syscall.SYS_IOCTL, f.Fd(), uintptr(syscall.TIOCSWINSZ), uintptr(unsafe.Pointer(ws)))
+}
+
 func (s *TerminalServer) handleTerminal(ws *websocket.Conn) {
-	// Create a new terminal with default size
-	term, err := server.NewTerminal(80, 24)
+	// Start a new terminal session
+	cmd := exec.Command("/bin/bash")
+
+	// Create a PTY
+	ptmx, err := os.OpenFile("/dev/ptmx", os.O_RDWR, 0)
 	if err != nil {
-		log.Printf("Failed to create terminal: %v", err)
+		log.Printf("Failed to open PTY: %v", err)
 		return
 	}
-	defer term.Close()
+	defer ptmx.Close()
 
-	// Start the terminal
-	if err := term.Start(""); err != nil {
-		log.Printf("Failed to start terminal: %v", err)
+	// Put terminal into raw mode
+	oldState, err := term.MakeRaw(int(ptmx.Fd()))
+	if err != nil {
+		log.Printf("Failed to set raw mode: %v", err)
+		return
+	}
+	defer term.Restore(int(ptmx.Fd()), oldState)
+
+	// Set initial terminal size
+	setWinsize(ptmx, 80, 24)
+
+	// Start the command with the PTY
+	cmd.Stdin = ptmx
+	cmd.Stdout = ptmx
+	cmd.Stderr = ptmx
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Setsid:  true,
+		Setctty: true,
+		Ctty:    int(ptmx.Fd()),
+	}
+
+	if err := cmd.Start(); err != nil {
+		log.Printf("Failed to start command: %v", err)
 		return
 	}
 
@@ -51,7 +93,7 @@ func (s *TerminalServer) handleTerminal(ws *websocket.Conn) {
 				return
 			}
 			if msg.Type == "resize" {
-				term.Resize(uint16(msg.Cols), uint16(msg.Rows))
+				setWinsize(ptmx, msg.Cols, msg.Rows)
 			}
 		}
 	}()
@@ -60,7 +102,7 @@ func (s *TerminalServer) handleTerminal(ws *websocket.Conn) {
 	go func() {
 		buf := make([]byte, 32*1024)
 		for {
-			n, err := term.Read(buf)
+			n, err := ptmx.Read(buf)
 			if err != nil {
 				return
 			}
@@ -77,14 +119,14 @@ func (s *TerminalServer) handleTerminal(ws *websocket.Conn) {
 			if err != nil {
 				return
 			}
-			if _, err := term.Write(buf[:n]); err != nil {
+			if _, err := ptmx.Write(buf[:n]); err != nil {
 				return
 			}
 		}
 	}()
 
-	// Wait for terminal to finish
-	select {}
+	// Wait for command to finish
+	cmd.Wait()
 }
 
 func (s *TerminalServer) Start() error {

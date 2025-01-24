@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"sync"
 	"syscall"
-	"time"
 
 	"github.com/creack/pty"
 	"golang.org/x/crypto/ssh"
@@ -257,46 +256,25 @@ func (s *SSHServer) handleShell(channel ssh.Channel, cmd *exec.Cmd) {
 		log.Printf("Failed to start command: %v", err)
 		return
 	}
-	log.Printf("Command started successfully")
 
-	// Create a WaitGroup to ensure all copies complete
+	// Copy data between pipes and SSH channel
 	var wg sync.WaitGroup
-	wg.Add(2) // Only wait for stdout/stderr
+	wg.Add(2)
 
-	// Copy stdin from SSH to command in a separate goroutine
-	if stdin != nil {
-		go func() {
-			io.Copy(stdin, channel)
-			stdin.Close()
-			log.Printf("Stdin copy complete")
-		}()
-	}
+	go func() {
+		defer wg.Done()
+		io.Copy(stdin, channel)
+		stdin.Close()
+	}()
 
-	// Copy stdout from command to SSH
-	if stdout != nil {
-		go func() {
-			defer func() {
-				wg.Done()
-				log.Printf("Stdout copy complete")
-			}()
-			io.Copy(channel, stdout)
-		}()
-	} else {
-		wg.Done()
-	}
+	go func() {
+		defer wg.Done()
+		io.Copy(channel, stdout)
+	}()
 
-	// Copy stderr from command to SSH
-	if stderr != nil {
-		go func() {
-			defer func() {
-				wg.Done()
-				log.Printf("Stderr copy complete")
-			}()
-			io.Copy(channel.Stderr(), stderr)
-		}()
-	} else {
-		wg.Done()
-	}
+	go func() {
+		io.Copy(channel.Stderr(), stderr)
+	}()
 
 	// Wait for command to finish
 	err = cmd.Wait()
@@ -312,17 +290,5 @@ func (s *SSHServer) handleShell(channel ssh.Channel, cmd *exec.Cmd) {
 		channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{0}))
 	}
 
-	// Wait for stdout/stderr copies to complete with timeout
-	done := make(chan struct{})
-	go func() {
-		wg.Wait()
-		close(done)
-	}()
-
-	select {
-	case <-done:
-		log.Printf("All copies complete")
-	case <-time.After(100 * time.Millisecond):
-		log.Printf("Copy timeout, closing channel")
-	}
+	wg.Wait()
 }
