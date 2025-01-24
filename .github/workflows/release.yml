@@ -8,6 +8,9 @@ on:
         required: false
         type: string
 
+permissions:
+  contents: write  # Needed for creating releases and uploading assets
+
 jobs:
   release:
     runs-on: ubuntu-latest

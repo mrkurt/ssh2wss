@@ -2,6 +2,10 @@ name: Check Changes
 
 on:
   workflow_call:  # Makes this workflow reusable
+    secrets:
+      ANTHROPIC_API_KEY:
+        description: "API key for Claude release notes generation"
+        required: false
     outputs:
       has_changes:
         description: "Whether substantial changes were found"
