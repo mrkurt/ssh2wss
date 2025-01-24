@@ -2,8 +2,10 @@ name: Tests
 
 on:
   workflow_call:  # Makes this workflow reusable
-  push:          # Also allow direct triggering on push
-  pull_request:  # And on PRs
+  push:
+    branches-ignore:
+      - main     # Don't run on main since main.yml handles it
+  pull_request:  # Run on PRs targeting any branch
 
 jobs:
   test:
