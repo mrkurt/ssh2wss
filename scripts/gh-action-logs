@@ -91,25 +91,94 @@ async function getJobLogs(jobId: number): Promise<string> {
   const { stdout } = await process.output();
   const output = new TextDecoder().decode(stdout);
   
-  // Split into groups and filter for ones that end with ##[error]
-  const groups = output.split(/##\[group\]/g).slice(1); // slice(1) to skip first empty chunk
-  const errorGroups = groups.filter(group => group.includes("##[error]"));
-  
-  // For each error group, keep everything up to ##[error] and strip timestamps
-  const cleanedGroups = errorGroups.map(group => {
-    const errorContent = group.split("##[error]")[0]; // Keep everything before ##[error]
-    return errorContent
-      .split("\n")
-      .map(line => line.split(/\s+/).slice(1).join(" ")) // Remove timestamp
-      .join("\n")
-      .trim();
-  });
-
   if (Deno.args.includes("--show-all-logs")) {
-    return groups.join("\n\n");
+    return output;
   }
 
-  return cleanedGroups.join("\n\n") || "No error logs found";
+  // Debug: show first few lines after timestamp removal
+  console.log("\nFirst 10 cleaned lines:");
+  output.split(/\r?\n/).slice(0, 10).forEach((line, i) => {
+    const clean = stripTimestamps(line).replace(/\r$/, "");
+    console.log(`Line ${i}:`, JSON.stringify(clean));
+  });
+  
+  const chunks = extractErrorChunks(output);
+  console.log("\nFound chunks:", chunks.length);
+  if (chunks.length > 0) {
+    console.log("First chunk preview:", JSON.stringify(chunks[0].slice(0, 200)));
+  }
+  
+  return chunks.join("\n\n") || "No error logs found";
+}
+
+function stripTimestamps(line: string): string {
+  const firstSpace = line.indexOf(" ");
+  return firstSpace >= 0 ? line.slice(firstSpace + 1) : line;
+}
+
+function extractErrorChunks(logs: string): string[] {
+  const lines = logs.split(/\r?\n/);
+  const chunks: string[] = [];
+  let currentChunk: string[] = [];
+  let inGroup = false;
+  let groupHasError = false;
+  let indentLevel = 0;
+
+  for (const line of lines) {
+    const cleanLine = stripTimestamps(line).replace(/\r$/, "");
+    
+    // End chunk if we see Process completed, but include the line
+    if (cleanLine.includes("Process completed")) {
+      if (groupHasError) {
+        currentChunk.push(`${" ".repeat(indentLevel * 2)}\x1b[31m${cleanLine.replace(/##\[error\]\s*/, "")}\x1b[0m`);
+        chunks.push(currentChunk.join("\n"));
+      }
+      currentChunk = [];
+      groupHasError = false;
+      inGroup = false;
+      indentLevel = 0;
+      continue;
+    }
+    
+    if (cleanLine.startsWith("##[group]")) {
+      // Save previous chunk if it had errors
+      if (groupHasError) {
+        chunks.push(currentChunk.join("\n"));
+      }
+      // Start new chunk if it's a Run group
+      if (cleanLine.startsWith("##[group]Run")) {
+        currentChunk = [cleanLine.replace(/##\[group\]\s*/, "")];
+        groupHasError = false;
+      }
+      inGroup = true;
+      indentLevel++;
+      continue;
+    }
+
+    if (cleanLine.startsWith("##[endgroup]")) {
+      indentLevel = Math.max(0, indentLevel - 1);
+      inGroup = indentLevel > 0;
+      continue;
+    }
+
+    if (cleanLine.includes("##[error]")) {
+      groupHasError = true;
+      // Color errors in red and strip error token
+      currentChunk.push(`${" ".repeat(indentLevel * 2)}\x1b[31m${cleanLine.replace(/##\[error\]\s*/, "")}\x1b[0m`);
+    } else if (inGroup) {
+      // Indent non-group-marker lines when in a group
+      currentChunk.push(`${" ".repeat(indentLevel * 2)}${cleanLine}`);
+    } else {
+      currentChunk.push(cleanLine);
+    }
+  }
+
+  // Don't forget the last chunk if we haven't seen Process completed
+  if (groupHasError) {
+    chunks.push(currentChunk.join("\n"));
+  }
+
+  return chunks;
 }
 
 async function watchRun(run: Run): Promise<boolean> {
@@ -191,8 +260,9 @@ async function waitForActiveRuns(): Promise<Run[]> {
       }
 
       await new Promise(resolve => setTimeout(resolve, 500));
-    } catch (error) {
-      console.error("\nError waiting for runs:", error.message);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("\nError waiting for runs:", message);
       await new Promise(resolve => setTimeout(resolve, 5000));
     }
   }
@@ -280,8 +350,9 @@ async function actionLogsMain() {
     } else {
       await listRecentRuns();
     }
-  } catch (error) {
-    console.error("Fatal error:", error.message);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("Fatal error:", message);
     Deno.exit(1);
   }
 }

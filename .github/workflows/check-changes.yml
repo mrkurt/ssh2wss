@@ -4,10 +4,10 @@ on:
   workflow_call:
     outputs:
       has_substantial_changes:
-        description: "Whether substantial changes were found"
+        description: "Whether there are substantial changes that warrant a release"
         value: ${{ jobs.check.outputs.has_substantial_changes }}
       release_notes:
-        description: "Generated release notes"
+        description: "Generated release notes for the changes"
         value: ${{ jobs.check.outputs.release_notes }}
     secrets:
       ANTHROPIC_API_KEY:

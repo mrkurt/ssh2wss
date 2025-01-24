@@ -397,8 +397,9 @@ async function checkChangesMain() {
     }
   }
 
+  // Set GitHub outputs
+  console.log("Setting GitHub outputs...");
   const githubOutput = Deno.env.get("GITHUB_OUTPUT");
-
   if (totalChanges > 1000) {
     console.log("\n✨ Changes exceed threshold - release recommended");
 
@@ -408,13 +409,8 @@ async function checkChangesMain() {
       const notes = await generateReleaseNotes(commits);
       await Deno.writeTextFile("release_notes.txt", notes);
       if (githubOutput) {
-        await Deno.writeTextFile(
-          githubOutput,
-          [
-            "has_substantial_changes=true",
-            `release_notes<<EOF\n${notes}EOF`,
-          ].join("\n"),
-        );
+        await Deno.writeTextFile(githubOutput, `has_substantial_changes=true\n`);
+        await Deno.writeTextFile(githubOutput, `release_notes<<EOF\n${notes}\nEOF\n`, { append: true });
       }
     } else {
       console.error(
@@ -422,7 +418,14 @@ async function checkChangesMain() {
       );
       Deno.exit(1);
     }
+  } else {
+    if (githubOutput) {
+      await Deno.writeTextFile(githubOutput, `has_substantial_changes=false\n`);
+      await Deno.writeTextFile(githubOutput, `release_notes<<EOF\nNo substantial changes\nEOF\n`, { append: true });
+    }
   }
+
+  console.log("Done!");
 }
 
 if (import.meta.main) {
