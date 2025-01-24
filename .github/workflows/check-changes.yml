@@ -6,12 +6,16 @@ on:
       has_changes:
         description: "Whether substantial changes were found"
         value: ${{ jobs.check.outputs.has_changes }}
+      release_notes:
+        description: "Generated release notes if changes are substantial"
+        value: ${{ jobs.check.outputs.release_notes }}
 
 jobs:
   check:
     runs-on: ubuntu-latest
     outputs:
       has_changes: ${{ steps.verify-changes.outputs.has_changes }}
+      release_notes: ${{ steps.verify-changes.outputs.release_notes }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -23,6 +27,18 @@ jobs:
           deno-version: "2.x"
       
       - id: verify-changes
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           chmod +x ./scripts/check-changes
-          ./scripts/check-changes $(git rev-list --max-parents=0 HEAD) && echo "has_changes=true" >> $GITHUB_OUTPUT || echo "has_changes=false" >> $GITHUB_OUTPUT 
+          # Try to get the last tag's SHA, fallback to first commit if no tags
+          SINCE=$(git describe --tags --abbrev=0 2>/dev/null || git rev-list --max-parents=0 HEAD)
+          if ./scripts/check-changes $SINCE; then
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+            # The script will only output release notes if ANTHROPIC_API_KEY is set
+            if [ -n "$ANTHROPIC_API_KEY" ] && [ -f "release_notes.txt" ]; then
+              echo "release_notes=$(cat release_notes.txt)" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          fi 

@@ -2,6 +2,11 @@ name: Release
 
 on:
   workflow_call:  # Makes this workflow reusable
+    inputs:
+      release_notes:
+        description: "Generated release notes from previous step"
+        required: false
+        type: string
 
 jobs:
   release:
@@ -42,6 +47,7 @@ jobs:
         with:
           tag_name: v${{ steps.version.outputs.version }}
           release_name: Release v${{ steps.version.outputs.version }}
+          body: ${{ inputs.release_notes || 'No release notes provided' }}
           draft: false
           prerelease: true
 
