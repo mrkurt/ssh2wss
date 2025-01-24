@@ -6,7 +6,7 @@ on:
 jobs:
   test:
     name: ":windows: Test"
-    runs-on: windows-latest-8-core
+    runs-on: windows-latest-8-cores
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
