@@ -1,5 +1,30 @@
 # Windows Timeout and Handle Debugging
 
+## Grep Patterns for Debugging
+
+To filter relevant shutdown logs, use:
+```
+grep -E "(Bridge Stop|context canceled|shutdown|listener closed|Failed to accept)"
+```
+
+This pattern will show:
+- When Bridge.Stop() is called
+- Context cancellation for both servers
+- Server shutdown progress
+- Listener closure
+- Any failed connection attempts during shutdown
+
+Example of clean shutdown sequence:
+```
+Bridge Stop() called, canceling context
+Bridge context canceled, waiting for servers to shut down
+WebSocket server context canceled, shutting down
+WebSocket server shutdown complete
+SSH server context canceled, closing listener
+SSH server listener closed
+Bridge shutdown complete
+```
+
 ## History of Changes
 
 ### Initial Issues

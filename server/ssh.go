@@ -54,7 +54,9 @@ func (s *SSHServer) Start(ctx context.Context) error {
 	shutdown := make(chan struct{})
 	go func() {
 		<-ctx.Done()
+		log.Println("SSH server context canceled, closing listener")
 		listener.Close()
+		log.Println("SSH server listener closed")
 		close(shutdown)
 	}()
 

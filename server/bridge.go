@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"time"
 )
 
 // Bridge ties together the SSH and WebSocket servers
@@ -48,5 +49,9 @@ func (b *Bridge) Start() error {
 
 // Stop gracefully shuts down both servers
 func (b *Bridge) Stop() {
+	log.Println("Bridge Stop() called, canceling context")
 	b.cancel()
+	log.Println("Bridge context canceled, waiting for servers to shut down")
+	time.Sleep(100 * time.Millisecond) // Give servers time to shut down
+	log.Println("Bridge shutdown complete")
 }

@@ -39,7 +39,11 @@ func (s *WebSocketServer) Start(ctx context.Context) error {
 	// Handle graceful shutdown
 	go func() {
 		<-ctx.Done()
-		server.Shutdown(context.Background())
+		log.Println("WebSocket server context canceled, shutting down")
+		if err := server.Shutdown(context.Background()); err != nil {
+			log.Printf("WebSocket server shutdown error: %v", err)
+		}
+		log.Println("WebSocket server shutdown complete")
 	}()
 
 	log.Printf("WebSocket server listening on port %d", s.port)
