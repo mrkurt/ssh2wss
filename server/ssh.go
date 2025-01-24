@@ -233,6 +233,7 @@ func (s *SSHServer) handleShell(channel ssh.Channel, cmd *exec.Cmd) {
 		stdin, err = cmd.StdinPipe()
 		if err != nil {
 			log.Printf("Failed to create stdin pipe: %v", err)
+			channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{1}))
 			return
 		}
 	}
@@ -240,6 +241,7 @@ func (s *SSHServer) handleShell(channel ssh.Channel, cmd *exec.Cmd) {
 		stdout, err = cmd.StdoutPipe()
 		if err != nil {
 			log.Printf("Failed to create stdout pipe: %v", err)
+			channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{1}))
 			return
 		}
 	}
@@ -247,6 +249,7 @@ func (s *SSHServer) handleShell(channel ssh.Channel, cmd *exec.Cmd) {
 		stderr, err = cmd.StderrPipe()
 		if err != nil {
 			log.Printf("Failed to create stderr pipe: %v", err)
+			channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{1}))
 			return
 		}
 	}
@@ -254,6 +257,7 @@ func (s *SSHServer) handleShell(channel ssh.Channel, cmd *exec.Cmd) {
 	// Start the command
 	if err := cmd.Start(); err != nil {
 		log.Printf("Failed to start command: %v", err)
+		channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{1}))
 		return
 	}
 
@@ -281,14 +285,20 @@ func (s *SSHServer) handleShell(channel ssh.Channel, cmd *exec.Cmd) {
 	if err != nil {
 		log.Printf("Command failed: %v", err)
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			if status, ok := exitErr.Sys().(syscall.WaitStatus); ok {
-				channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{uint32(status.ExitStatus())}))
-			}
+			exitCode, _ := getExitStatus(exitErr)
+			channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{exitCode}))
+		} else {
+			// If we can't get the exit status, send a generic error code
+			channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{1}))
 		}
 	} else {
 		log.Printf("Command completed successfully")
 		channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{0}))
 	}
 
+	// Wait for all goroutines to finish
 	wg.Wait()
+
+	// Close the channel to ensure clean shutdown
+	channel.Close()
 }

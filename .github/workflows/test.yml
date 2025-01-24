@@ -17,18 +17,30 @@ jobs:
 
      - uses: actions/setup-go@v4
        with:
-         go-version: '1.21'
+         go-version: '1.22'
          cache: false  # Disable built-in cache to use our own
+
+     # Clean up any existing files that might conflict with cache restore
+     - name: Clean Go caches
+       shell: bash
+       run: |
+         rm -rf ~/.cache/go-build
+         rm -rf ~/go/pkg/mod
+       if: runner.os == 'Linux'
+     
+     - name: Clean Go caches (Windows)
+       shell: cmd
+       run: |
+         if exist "%USERPROFILE%\AppData\Local\go-build" rmdir /s /q "%USERPROFILE%\AppData\Local\go-build"
+         if exist "%USERPROFILE%\go\pkg\mod" rmdir /s /q "%USERPROFILE%\go\pkg\mod"
+       if: runner.os == 'Windows'
 
      - uses: actions/cache@v4
        with:
          path: |
-           ~/.cache/go-build
-           ~/go/pkg/mod
+           ${{ runner.os == 'Windows' && '~\AppData\Local\go-build' || '~/.cache/go-build' }}
+           ${{ runner.os == 'Windows' && '~\go\pkg\mod' || '~/go/pkg/mod' }}
          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-         restore-keys: |
-           ${{ runner.os }}-go-
-         restore-flags: '--exclude "**.go" --exclude "SECURITY.md" --exclude "LICENSE"'
 
      - run: go mod download
      - run: go test -v ./...

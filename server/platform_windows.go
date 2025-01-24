@@ -25,10 +25,8 @@ func setWinsize(f *os.File, w, h int) error {
 
 // getExitStatus extracts the exit code from an ExitError
 func getExitStatus(err *exec.ExitError) (uint32, bool) {
-	if status, ok := err.Sys().(syscall.WaitStatus); ok {
-		return uint32(status.ExitCode), true
-	}
-	return 0, false
+	// On Windows, err.ExitCode() is already available
+	return uint32(err.ExitCode()), true
 }
 
 // setupProcessAttributes configures platform-specific process attributes
