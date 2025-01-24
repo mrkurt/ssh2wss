@@ -1,30 +1,28 @@
 name: Tests
 
 on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
+  workflow_call:  # Makes this workflow reusable
+  push:          # Also allow direct triggering on push
+  pull_request:  # And on PRs
 
 jobs:
   test:
-    name: Run Tests
     runs-on: ubuntu-latest
-
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history and tags
 
-    - name: Set up Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: '1.21'
-        check-latest: true
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
 
-    - name: Generate SSH Key
-      run: ssh-keygen -t rsa -f host.key -N ""
+      - name: Generate SSH Key
+        run: ssh-keygen -t rsa -f host.key -N ""
 
-    - name: Get dependencies
-      run: go get -v ./...
+      - name: Get dependencies
+        run: go get -v ./...
 
-    - name: Run tests
-      run: go test -v ./... 
+      - name: Run tests
+        run: go test -v ./... 

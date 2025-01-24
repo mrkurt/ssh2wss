@@ -1,0 +1,28 @@
+name: Check Changes
+
+on:
+  workflow_call:  # Makes this workflow reusable
+    outputs:
+      has_changes:
+        description: "Whether substantial changes were found"
+        value: ${{ jobs.check.outputs.has_changes }}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      has_changes: ${{ steps.verify-changes.outputs.has_changes }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Need full history for tags
+      
+      - name: Setup Deno
+        uses: denoland/setup-deno@v1
+        with:
+          deno-version: "2.x"
+      
+      - id: verify-changes
+        run: |
+          chmod +x ./scripts/check-changes
+          ./scripts/check-changes $(git rev-list --max-parents=0 HEAD) && echo "has_changes=true" >> $GITHUB_OUTPUT || echo "has_changes=false" >> $GITHUB_OUTPUT 
