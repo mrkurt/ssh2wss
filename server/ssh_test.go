@@ -24,7 +24,7 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-func TestInteractiveSSH(t *testing.T) {
+func TestSSHServerInteractive(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Interactive SSH tests not supported on Windows (no PTY support)")
 	}
@@ -154,7 +154,7 @@ func generateTestKey() ([]byte, error) {
 	return privateBytes, nil
 }
 
-func TestInteractiveSSHWithSubprocess(t *testing.T) {
+func TestSSHServerInteractiveWithSubprocess(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Interactive SSH tests not supported on Windows (no PTY support)")
 	}
@@ -289,7 +289,11 @@ type pipeAddr struct{ name string }
 func (a pipeAddr) Network() string { return "pipe" }
 func (a pipeAddr) String() string  { return a.name }
 
-func TestWindowResize(t *testing.T) {
+func TestSSHServerWindowResize(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Interactive SSH tests not supported on Windows (no PTY support)")
+	}
+
 	// Generate test key
 	key, err := generateTestKey()
 	if err != nil {

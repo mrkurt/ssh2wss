@@ -2,12 +2,14 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"ssh2wss/auth"
 
@@ -31,25 +33,39 @@ func NewWebSocketServer(port int) *WebSocketServer {
 
 // Start starts the WebSocket server
 func (s *WebSocketServer) Start(ctx context.Context) error {
+	// Create HTTP server
 	server := &http.Server{
-		Addr:    fmt.Sprintf(":%d", s.port),
+		Addr:    fmt.Sprintf("localhost:%d", s.port),
 		Handler: s.withAuth(s.handler),
 	}
 
-	// Handle graceful shutdown
+	// Create a channel to signal shutdown completion
+	shutdownComplete := make(chan struct{})
+
+	// Start server in a goroutine
 	go func() {
-		<-ctx.Done()
-		log.Println("WebSocket server context canceled, shutting down")
-		if err := server.Shutdown(context.Background()); err != nil {
-			log.Printf("WebSocket server shutdown error: %v", err)
+		defer close(shutdownComplete)
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Printf("WebSocket server error: %v", err)
 		}
-		log.Println("WebSocket server shutdown complete")
 	}()
 
-	log.Printf("WebSocket server listening on port %d", s.port)
-	if err := server.ListenAndServe(); err != http.ErrServerClosed {
+	// Wait for context cancellation
+	<-ctx.Done()
+	log.Println("WebSocket server context canceled, shutting down")
+
+	// Create a timeout context for shutdown
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Shutdown the server
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		log.Printf("WebSocket server shutdown error: %v", err)
 		return err
 	}
+
+	// Wait for server to finish
+	<-shutdownComplete
 	return nil
 }
 

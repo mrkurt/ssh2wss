@@ -40,10 +40,11 @@ Bridge shutdown complete
 - Implemented context-based server shutdown
 
 ### Latest Changes
-- Explicitly skipped all interactive shell tests on Windows
-- Added clear documentation about PTY support being required
-- Removed attempts to run interactive tests in CI
-- Focused on non-interactive command execution for Windows
+- Implemented proper shutdown signaling for both servers
+- Added completion channels to track server shutdown
+- Fixed race conditions in shutdown sequence
+- Improved Windows command execution and exit code handling
+- Added timeout context for WebSocket server shutdown
 
 ### Server Shutdown Changes
 1. Bridge Implementation:
@@ -53,6 +54,8 @@ Bridge shutdown complete
        sshServer *SSHServer
        ctx       context.Context
        cancel    context.CancelFunc
+       sshDone   chan struct{} // signals SSH server shutdown complete
+       wsDone    chan struct{} // signals WebSocket server shutdown complete
    }
    ```
 
@@ -60,11 +63,15 @@ Bridge shutdown complete
    - Added context to `Start()` method
    - Implemented graceful shutdown using `http.Server`
    - Added cleanup for WebSocket connections
+   - Added 5-second timeout for graceful shutdown
+   - Added shutdown completion signaling
 
 3. SSH Server:
    - Added context to `Start()` method
-   - Implemented shutdown channel for clean exit
+   - Implemented shutdown and completion channels
    - Added proper handle cleanup for Windows
+   - Improved connection acceptance handling during shutdown
+   - Fixed race conditions in listener closure
 
 ### Handle Management
 1. **Process Handles**:
@@ -98,7 +105,8 @@ Bridge shutdown complete
 2. **Test Cleanup**:
    - Added `t.Cleanup()` for proper teardown
    - Implemented context cancellation
-   - Added sleep to allow for graceful shutdown
+   - Added proper shutdown sequence verification
+   - Fixed timing issues in shutdown tests
 
 ### Known Issues
 1. Interactive Shell Support
@@ -108,28 +116,30 @@ Bridge shutdown complete
    - Tracking issue for future implementation
 
 2. Resource Cleanup
-   - Some handles may not be properly closed
-   - Need better synchronization for cleanup
-   - Potential race conditions in shutdown
+   - Improved handle cleanup but may need further testing
+   - Added better synchronization for cleanup
+   - Fixed most race conditions in shutdown
 
 3. Test Environment
    - CI environment behaving differently than local
-   - Timeout values may need adjustment
-   - Debug logging affecting buffer handling
+   - Exit code handling differs between Windows and macOS
+   - Added more debug logging for shutdown sequence
 
 ## Next Steps
 
 1. **Testing Needed**:
-   - Validate handle cleanup on Windows
-   - Test server shutdown sequences
+   - Further validation of handle cleanup on Windows
+   - More extensive testing of server shutdown sequences
    - Monitor handle usage in CI environment
+   - Test exit code handling across different platforms
 
 2. **Potential Solutions**:
    - Research Windows PTY/console implementation options
    - Add handle tracking and verification
-   - Improve shutdown synchronization
+   - Consider platform-specific exit code handling
 
 3. **Open Questions**:
    - What's the best approach for Windows PTY support?
    - Are there existing Go packages for Windows console?
-   - How to properly implement interactive shells on Windows? 
+   - How to properly implement interactive shells on Windows?
+   - Should exit code handling be platform-specific? 

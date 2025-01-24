@@ -42,16 +42,17 @@ func NewSSHServer(port int, hostKey []byte) (*SSHServer, error) {
 
 // Start starts the SSH server
 func (s *SSHServer) Start(ctx context.Context) error {
-	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", s.port))
+	// Create listener
+	listener, err := net.Listen("tcp", fmt.Sprintf("localhost:%d", s.port))
 	if err != nil {
-		return fmt.Errorf("failed to listen on port %d: %v", s.port, err)
+		return fmt.Errorf("failed to start listener: %v", err)
 	}
-	defer listener.Close()
-
-	log.Printf("SSH server listening on port %d", s.port)
 
 	// Create a channel to signal shutdown
 	shutdown := make(chan struct{})
+	shutdownComplete := make(chan struct{})
+
+	// Handle shutdown in a separate goroutine
 	go func() {
 		<-ctx.Done()
 		log.Println("SSH server context canceled, closing listener")
@@ -60,22 +61,30 @@ func (s *SSHServer) Start(ctx context.Context) error {
 		close(shutdown)
 	}()
 
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			select {
-			case <-shutdown:
-				return nil // Clean shutdown
-			default:
-				if !errors.Is(err, net.ErrClosed) {
-					log.Printf("Failed to accept connection: %v", err)
+	// Handle connections in a separate goroutine
+	go func() {
+		defer close(shutdownComplete)
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				select {
+				case <-shutdown:
+					return // Clean shutdown
+				default:
+					if !errors.Is(err, net.ErrClosed) {
+						log.Printf("Failed to accept connection: %v", err)
+					}
+					continue
 				}
-				continue
 			}
-		}
 
-		go s.handleConnection(conn)
-	}
+			go s.handleConnection(conn)
+		}
+	}()
+
+	// Wait for shutdown to complete
+	<-shutdownComplete
+	return nil
 }
 
 func (s *SSHServer) handleConnection(conn net.Conn) {

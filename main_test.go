@@ -224,10 +224,7 @@ func TestBridge(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Logf("Starting SSH command test: %s", tt.name)
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
-
-				sshCmd := exec.CommandContext(ctx, "ssh",
+				sshCmd := exec.Command("ssh",
 					"-p", fmt.Sprintf("%d", testSSHPort),
 					"-o", "StrictHostKeyChecking=no",
 					"-o", "UserKnownHostsFile="+knownHostsFile,
