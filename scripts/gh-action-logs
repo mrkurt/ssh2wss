@@ -1,5 +1,8 @@
 #!/usr/bin/env -S deno run --allow-run --allow-net=api.github.com
 
+// IMPORTANT: Always make the smallest possible changes to this file when modifying it.
+// Each change should be focused and minimal to maintain stability and readability.
+
 const STATUS_EMOJI = {
   queued: "⏳",
   in_progress: "🔄",
@@ -191,6 +194,9 @@ async function getJobLogs(jobId: number): Promise<string> {
 async function watchRun(run: Run): Promise<boolean> {
   const showAnnotations = Deno.args.includes("--show-annotations");
   
+  // Clear screen and move cursor to top
+  console.log("\x1b[2J\x1b[H");
+  
   // Use conclusion emoji for completed runs
   const emoji = run.status === "completed" && run.conclusion 
     ? STATUS_EMOJI[run.conclusion as keyof typeof STATUS_EMOJI] 
@@ -223,6 +229,11 @@ async function watchRun(run: Run): Promise<boolean> {
         const logs = await getJobLogs(job.id);
         console.log(logs.split("\n").map(line => `      ${line}`).join("\n"));
       }
+    } else if (job.status === "in_progress") {
+      // Show current logs for in-progress jobs
+      console.log("\n    Current job logs:");
+      const logs = await getJobLogs(job.id);
+      console.log(logs.split("\n").map(line => `      ${line}`).join("\n"));
     }
   }
 
@@ -306,11 +317,8 @@ async function actionLogsMain() {
       while (true) {
         const completed = await watchRun(run);
         if (completed) {
-          if (run.conclusion === "failure") {
-            console.log("Exiting due to failed run");
-            Deno.exit(1);
-          }
-          break;
+          // Exit with status code based on run conclusion
+          Deno.exit(run.conclusion === "success" ? 0 : 1);
         }
         await new Promise(resolve => setTimeout(resolve, 5000));
       }
