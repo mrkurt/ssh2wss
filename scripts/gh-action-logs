@@ -21,14 +21,14 @@ interface Run {
   headBranch: string;
   name: string;
   createdAt: string;
-  head_sha?: string;
+  head_sha: string;
 }
 
 interface Job {
-  id: number;
+  databaseId: number;
+  name: string;
   status: string;
   conclusion: string | null;
-  name: string;
 }
 
 function formatElapsedTime(ms: number): string {
@@ -214,12 +214,12 @@ async function watchRun(run: Run): Promise<boolean> {
       ? STATUS_EMOJI[job.conclusion as keyof typeof STATUS_EMOJI]
       : STATUS_EMOJI[job.status as keyof typeof STATUS_EMOJI];
       
-    output += `  ${jobEmoji} ${job.name} (Job #${job.id})\n`;
+    output += `  ${jobEmoji} ${job.name} (Job #${job.databaseId})\n`;
     numLines++;
     
     if (job.status === "completed") {
       if (showAnnotations) {
-        const annotations = await getAnnotationsForJob(job.id);
+        const annotations = await getAnnotationsForJob(job.databaseId);
         if (annotations.length > 0) {
           output += "    Annotations:\n";
           numLines++;
@@ -234,7 +234,7 @@ async function watchRun(run: Run): Promise<boolean> {
       if (job.conclusion === "failure") {
         output += "\n    Full job logs:\n";
         numLines += 2;
-        const logs = await getJobLogs(job.id);
+        const logs = await getJobLogs(job.databaseId);
         const logLines = logs.split("\n").map(line => `      ${line}`).join("\n");
         output += logLines + "\n";
         numLines += countLines(logLines) + 1;
@@ -243,7 +243,7 @@ async function watchRun(run: Run): Promise<boolean> {
       // Show current logs for in-progress jobs
       output += "\n    Current job logs:\n";
       numLines += 2;
-      const logs = await getJobLogs(job.id);
+      const logs = await getJobLogs(job.databaseId);
       const logLines = logs.split("\n").map(line => `      ${line}`).join("\n");
       output += logLines + "\n";
       numLines += countLines(logLines) + 1;
@@ -314,31 +314,72 @@ async function listRecentRuns(): Promise<void> {
   }
 }
 
+async function saveRawLogs(runId: number, jobId: number) {
+  const cmd = new Deno.Command("gh", {
+    args: ["api", `/repos/mrkurt/ssh2wss/actions/jobs/${jobId}/logs`],
+  });
+  const output = await cmd.output();
+  const logs = new TextDecoder().decode(output.stdout);
+  
+  const tmpFile = await Deno.makeTempFile({ prefix: "gh-action-", suffix: ".log" });
+  await Deno.writeTextFile(tmpFile, logs);
+  console.log(`Raw logs saved to: ${tmpFile}`);
+  return logs;
+}
+
+async function findLatestRun(): Promise<Run | null> {
+  const cmd = new Deno.Command("gh", {
+    args: ["api", "/repos/mrkurt/ssh2wss/actions/runs"],
+  });
+  const output = await cmd.output();
+  const response = JSON.parse(new TextDecoder().decode(output.stdout));
+  const runs = response.workflow_runs;
+  return runs.length > 0 ? runs[0] : null;
+}
+
+async function processJobLogs(job: Job, showAllLogs: boolean) {
+  const logs = await getJobLogs(job.databaseId);
+  if (showAllLogs) {
+    console.log(logs);
+  } else {
+    const chunks = extractErrorChunks(logs);
+    if (chunks.length === 0) {
+      console.log("No error logs found");
+    } else {
+      chunks.forEach((chunk, i) => {
+        console.log(`\nError chunk ${i + 1}:`);
+        console.log(chunk);
+      });
+    }
+  }
+}
+
 async function actionLogsMain() {
-  const watch = Deno.args.includes("--watch");
+  const args = Deno.args;
+  const shouldWatch = args.includes("--watch");
+  const showAllLogs = args.includes("--showAllLogs");
+  const saveRaw = args.includes("--save-raw");
 
   try {
-    if (watch) {
+    if (shouldWatch) {
       const sha = await getCurrentCommitSHA();
       console.log("Watching for workflow run with commit:", sha);
-      
-      const run = await waitForRunWithCommit(sha);
-      if (!run) {
-        console.error("Failed to find workflow run");
-        Deno.exit(1);
-      }
+      await watchRun(sha);
+      return;
+    }
 
-      // Watch the run until it completes
-      while (true) {
-        const completed = await watchRun(run);
-        if (completed) {
-          // Exit with status code based on run conclusion
-          Deno.exit(run.conclusion === "success" ? 0 : 1);
-        }
-        await new Promise(resolve => setTimeout(resolve, 5000));
-      }
+    const run = await findLatestRun();
+    if (!run) {
+      console.error("No workflow run found");
+      Deno.exit(1);
+    }
+
+    if (saveRaw) {
+      const jobs = await getJobsForRun(run.databaseId);
+      await saveRawLogs(run.databaseId, jobs[0].databaseId);
     } else {
-      await listRecentRuns();
+      const jobs = await getJobsForRun(run.databaseId);
+      await processJobLogs(jobs[0], showAllLogs);
     }
   } catch (error) {
     console.error("Fatal error:", error);

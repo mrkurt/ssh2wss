@@ -165,21 +165,11 @@ func TestBridge(t *testing.T) {
 	})
 
 	// Test SSH functionality
-	t.Run("Command Execution", func(t *testing.T) {
+	t.Run("Command_Execution", func(t *testing.T) {
 		if runtime.GOOS == "windows" {
-			// Print SSH help output on Windows
-			helpCmd := exec.Command("ssh", "-h")
-			helpOutput, helpErr := helpCmd.CombinedOutput()
-			t.Logf("SSH help output:\n%s\nError: %v", string(helpOutput), helpErr)
-
-			// Check if SSH is in PATH
+			// Just check if SSH is available
 			sshPath, err := exec.LookPath("ssh")
-			t.Logf("SSH binary location: %v (err: %v)", sshPath, err)
-
-			// Check OpenSSH Windows service
-			svcCmd := exec.Command("sc", "query", "sshd")
-			svcOutput, svcErr := svcCmd.CombinedOutput()
-			t.Logf("SSH service check - output: %s, error: %v", string(svcOutput), svcErr)
+			t.Logf("SSH binary location: %s (err: %v)", sshPath, err)
 		}
 
 		var tests []struct {
@@ -217,11 +207,14 @@ func TestBridge(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Logf("Starting SSH command test: %s", tt.name)
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+
 				sshCmd := exec.CommandContext(ctx, "ssh",
 					"-p", fmt.Sprintf("%d", testSSHPort),
 					"-o", "StrictHostKeyChecking=no",
 					"-o", "UserKnownHostsFile="+knownHostsFile,
-					"-o", "LogLevel=DEBUG3", // Increase SSH client logging
+					"-o", "LogLevel=ERROR",
 					"localhost",
 					tt.command)
 

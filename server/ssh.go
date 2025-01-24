@@ -263,7 +263,7 @@ func (s *SSHServer) handleShell(channel ssh.Channel, cmd *exec.Cmd) {
 
 	// Copy data between pipes and SSH channel
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(3) // Changed from 2 to 3 to include stderr
 
 	go func() {
 		defer wg.Done()
@@ -277,28 +277,43 @@ func (s *SSHServer) handleShell(channel ssh.Channel, cmd *exec.Cmd) {
 	}()
 
 	go func() {
+		defer wg.Done()
 		io.Copy(channel.Stderr(), stderr)
 	}()
 
 	// Wait for command to finish
 	err = cmd.Wait()
+	log.Printf("Command finished, checking exit status")
+
+	var exitCode uint32
 	if err != nil {
-		log.Printf("Command failed: %v", err)
+		log.Printf("Command returned error: %v", err)
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			exitCode, _ := getExitStatus(exitErr)
-			channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{exitCode}))
+			code, ok := getExitStatus(exitErr)
+			if ok {
+				exitCode = code
+				log.Printf("Got exit code from error: %d", exitCode)
+			} else {
+				exitCode = 1
+				log.Printf("Could not get exit code from error, using: %d", exitCode)
+			}
 		} else {
-			// If we can't get the exit status, send a generic error code
-			channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{1}))
+			exitCode = 1
+			log.Printf("Non-exit error occurred, using exit code: %d", exitCode)
 		}
 	} else {
-		log.Printf("Command completed successfully")
-		channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{0}))
+		exitCode = uint32(cmd.ProcessState.ExitCode())
+		log.Printf("Command succeeded, got exit code: %d", exitCode)
 	}
+
+	// Send the exit status
+	log.Printf("Sending exit status: %d", exitCode)
+	channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{exitCode}))
 
 	// Wait for all goroutines to finish
 	wg.Wait()
 
 	// Close the channel to ensure clean shutdown
 	channel.Close()
+	log.Printf("Shell handler completed")
 }
