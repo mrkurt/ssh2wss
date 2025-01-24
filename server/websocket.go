@@ -74,25 +74,28 @@ func (s *WebSocketServer) handleConnection(ws *websocket.Conn) {
 	log.Printf("WebSocket connection authenticated")
 
 	// Handle the WebSocket connection
-	var buf [1024]byte
 	for {
-		n, err := ws.Read(buf[:])
+		var msg string
+		err := websocket.Message.Receive(ws, &msg)
 		if err != nil {
-			if err != io.EOF {
+			if err == io.EOF {
+				log.Printf("WebSocket connection closed by client")
+			} else if _, ok := err.(*websocket.ProtocolError); ok {
+				log.Printf("WebSocket protocol error (malformed frame): %v", err)
+			} else {
 				log.Printf("WebSocket read error: %v", err)
 			}
 			return
 		}
 
-		cmd := string(buf[:n])
-		log.Printf("WebSocket received command: %s", cmd)
+		log.Printf("WebSocket received command: %s", msg)
 
 		// Execute the command and send back the response
-		if strings.HasPrefix(cmd, "echo") {
-			response := strings.TrimPrefix(cmd, "echo ")
+		if strings.HasPrefix(msg, "echo") {
+			response := strings.TrimPrefix(msg, "echo ")
 			response = strings.TrimSpace(response)
 			response = fmt.Sprintf("%s\n", response)
-			if _, err := ws.Write([]byte(response)); err != nil {
+			if err := websocket.Message.Send(ws, response); err != nil {
 				log.Printf("WebSocket write error: %v", err)
 				return
 			}

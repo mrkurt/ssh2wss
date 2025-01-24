@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"fmt"
@@ -11,14 +12,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"ssh2wss/auth"
+	"ssh2wss/server"
 	"strings"
 	"testing"
 	"time"
-
-	"ssh2wss/auth"
-	"ssh2wss/server"
-
-	"bufio"
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/net/websocket"
@@ -336,6 +334,153 @@ func TestBridge(t *testing.T) {
 		output := stdout.String()
 		if !strings.Contains(output, "ready") {
 			t.Errorf("Expected to see 'ready' in output, got:\n%s", output)
+		}
+	})
+
+	t.Run("WebSocket_Fragmented", func(t *testing.T) {
+		// Create a TCP connection directly
+		conn, err := net.Dial("tcp", fmt.Sprintf("localhost:%d", testWSPort))
+		if err != nil {
+			t.Fatalf("Failed to connect: %v", err)
+		}
+		defer conn.Close()
+
+		// Send HTTP WebSocket upgrade request
+		req := fmt.Sprintf("GET /ssh HTTP/1.1\r\n"+
+			"Host: localhost:%d\r\n"+
+			"Authorization: Bearer %s\r\n"+
+			"Connection: Upgrade\r\n"+
+			"Upgrade: websocket\r\n"+
+			"Sec-WebSocket-Version: 13\r\n"+
+			"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
+			testWSPort, testToken)
+
+		if _, err := conn.Write([]byte(req)); err != nil {
+			t.Fatalf("Failed to write upgrade request: %v", err)
+		}
+
+		// Read upgrade response
+		reader := bufio.NewReader(conn)
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				t.Fatalf("Failed to read response: %v", err)
+			}
+			if line == "\r\n" {
+				break // End of headers
+			}
+		}
+
+		// Send command one byte at a time
+		command := "echo fragmented message"
+		for i := 0; i < len(command); i++ {
+			_, err = conn.Write([]byte{command[i]})
+			if err != nil {
+				t.Fatalf("Failed to write byte: %v", err)
+			}
+			time.Sleep(10 * time.Millisecond) // Small delay between bytes
+		}
+
+		// Read response
+		buf := make([]byte, 1024)
+		n, err := conn.Read(buf)
+		if err != nil {
+			t.Fatalf("Failed to read response: %v", err)
+		}
+		t.Logf("Response: %s", string(buf[:n]))
+	})
+
+	t.Run("WebSocket_Edge_Cases", func(t *testing.T) {
+		tests := []struct {
+			name                string
+			send                func(net.Conn) error
+			expectProtocolError bool
+		}{
+			{
+				name: "Invalid Frame Header",
+				send: func(conn net.Conn) error {
+					// Send invalid WebSocket frame header
+					_, err := conn.Write([]byte{0x82, 0x00}) // Invalid opcode
+					return err
+				},
+				expectProtocolError: true,
+			},
+			{
+				name: "Fragmented Text Frame",
+				send: func(conn net.Conn) error {
+					// Send fragmented text frame without FIN bit
+					_, err := conn.Write([]byte{0x01, 0x03, 'e', 'c', 'h'})
+					return err
+				},
+				expectProtocolError: true,
+			},
+			{
+				name: "Oversized Frame",
+				send: func(conn net.Conn) error {
+					// Send frame with invalid length
+					_, err := conn.Write([]byte{0x81, 0xFF, 0xFF, 0xFF, 0xFF})
+					return err
+				},
+				expectProtocolError: true,
+			},
+			{
+				name: "Invalid UTF-8",
+				send: func(conn net.Conn) error {
+					// Send invalid UTF-8 sequence in text frame
+					_, err := conn.Write([]byte{0x81, 0x02, 0xFF, 0xFF})
+					return err
+				},
+				expectProtocolError: true,
+			},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				// Create a TCP connection directly
+				conn, err := net.Dial("tcp", fmt.Sprintf("localhost:%d", testWSPort))
+				if err != nil {
+					t.Fatalf("Failed to connect: %v", err)
+				}
+				defer conn.Close()
+
+				// Send HTTP WebSocket upgrade request
+				req := fmt.Sprintf("GET /ssh HTTP/1.1\r\n"+
+					"Host: localhost:%d\r\n"+
+					"Authorization: Bearer %s\r\n"+
+					"Connection: Upgrade\r\n"+
+					"Upgrade: websocket\r\n"+
+					"Sec-WebSocket-Version: 13\r\n"+
+					"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
+					testWSPort, testToken)
+
+				if _, err := conn.Write([]byte(req)); err != nil {
+					t.Fatalf("Failed to write upgrade request: %v", err)
+				}
+
+				// Read upgrade response
+				reader := bufio.NewReader(conn)
+				for {
+					line, err := reader.ReadString('\n')
+					if err != nil {
+						t.Fatalf("Failed to read response: %v", err)
+					}
+					if line == "\r\n" {
+						break // End of headers
+					}
+				}
+
+				// Send test-specific data
+				if err := tt.send(conn); err != nil {
+					t.Fatalf("Failed to send data: %v", err)
+				}
+
+				// Read response - should get EOF or protocol error
+				buf := make([]byte, 1024)
+				_, err = conn.Read(buf)
+				if err == nil {
+					t.Error("Expected connection to be closed after protocol error")
+				}
+			})
 		}
 	})
 
