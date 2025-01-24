@@ -1,0 +1,68 @@
+#!/usr/bin/env -S deno run --allow-run
+
+// @ts-ignore: Deno namespace
+async function getLastReleaseTag(): Promise<string> {
+  const process = new Deno.Command("git", {
+    args: ["describe", "--tags", "--abbrev=0"],
+    stderr: "null",
+  });
+  try {
+    const { stdout } = await process.output();
+    return new TextDecoder().decode(stdout).trim() || "v0.1.0";
+  } catch {
+    return "v0.1.0"; // Default if no tags exist
+  }
+}
+
+// @ts-ignore: Deno namespace
+async function getChangedFiles(since: string): Promise<string[]> {
+  const process = new Deno.Command("git", {
+    args: ["diff", "--name-only", since],
+  });
+  const { stdout } = await process.output();
+  return new TextDecoder().decode(stdout).trim().split("\n");
+}
+
+function isSubstantialFile(file: string): boolean {
+  // Ignore test files, documentation, and workflow files
+  if (
+    file.endsWith("_test.go") ||
+    file.endsWith(".md") ||
+    file.startsWith(".github/") ||
+    file.startsWith("docs/") ||
+    file === ""
+  ) {
+    return false;
+  }
+  return true;
+}
+
+async function main() {
+  try {
+    const lastTag = await getLastReleaseTag();
+    const changedFiles = await getChangedFiles(lastTag);
+    const substantialChanges = changedFiles.filter(isSubstantialFile);
+    
+    if (substantialChanges.length > 0) {
+      console.log("Substantial changes found in:");
+      substantialChanges.forEach(file => console.log(`  - ${file}`));
+      // Exit with 0 to indicate changes found
+      // @ts-ignore: Deno namespace
+      Deno.exit(0);
+    } else {
+      console.log("No substantial changes found since", lastTag);
+      // Exit with 1 to indicate no changes
+      // @ts-ignore: Deno namespace
+      Deno.exit(1);
+    }
+  } catch (error) {
+    console.error("Error:", error.message);
+    // @ts-ignore: Deno namespace
+    Deno.exit(1);
+  }
+}
+
+// @ts-ignore: Deno import.meta
+if (import.meta.main) {
+  main();
+} 
