@@ -1,4 +1,4 @@
-name: Windows Build
+name: ":windows: Build"
 
 on:
   workflow_call:  # Makes this workflow reusable 
@@ -6,7 +6,7 @@ on:
 jobs:
   build:
     name: ":windows: Build"
-    runs-on: windows-latest
+    runs-on: windows-latest-8-core
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
