@@ -9,8 +9,6 @@ import (
 	"os/exec"
 	"sync"
 	"syscall"
-	"time"
-	"unsafe"
 
 	"github.com/creack/pty"
 	"golang.org/x/crypto/ssh"
@@ -96,13 +94,6 @@ func (s *SSHServer) handleConnection(conn net.Conn) {
 	}
 }
 
-func getDefaultShell() string {
-	if shell := os.Getenv("SHELL"); shell != "" {
-		return shell
-	}
-	return "/bin/bash"
-}
-
 func (s *SSHServer) handleChannelRequests(channel ssh.Channel, requests <-chan *ssh.Request) {
 	var cmd *exec.Cmd
 	var ptyReq bool
@@ -145,6 +136,9 @@ func (s *SSHServer) handleChannelRequests(channel ssh.Channel, requests <-chan *
 				cmd = exec.Command(shell)
 				cmd.Env = append(os.Environ(), "TERM=xterm")
 
+				// Set up process attributes before starting PTY
+				setupProcessAttributes(cmd, true)
+
 				// Create PTY
 				ptmx, err := pty.Start(cmd)
 				if err != nil {
@@ -152,32 +146,6 @@ func (s *SSHServer) handleChannelRequests(channel ssh.Channel, requests <-chan *
 					return
 				}
 				defer ptmx.Close()
-
-				// Handle window size changes
-				go func() {
-					for req := range requests {
-						if req.Type == "window-change" {
-							w := &struct {
-								Width  uint32
-								Height uint32
-								X      uint32
-								Y      uint32
-							}{}
-							if err := ssh.Unmarshal(req.Payload, w); err != nil {
-								log.Printf("Failed to parse window-change payload: %v", err)
-								continue
-							}
-							if err := pty.Setsize(ptmx, &pty.Winsize{
-								Rows: uint16(w.Height),
-								Cols: uint16(w.Width),
-								X:    uint16(w.X),
-								Y:    uint16(w.Y),
-							}); err != nil {
-								log.Printf("Failed to set window size: %v", err)
-							}
-						}
-					}
-				}()
 
 				// Copy PTY input/output
 				go func() {
@@ -202,7 +170,7 @@ func (s *SSHServer) handleChannelRequests(channel ssh.Channel, requests <-chan *
 				}
 				return
 			} else {
-				cmd = exec.Command(shell, "-l")
+				cmd = exec.Command(shell, getShellArgs(true)...)
 			}
 			log.Printf("Starting shell (%s) with PTY: %v", shell, ptyReq)
 			s.handleShell(channel, cmd)
@@ -218,7 +186,8 @@ func (s *SSHServer) handleChannelRequests(channel ssh.Channel, requests <-chan *
 				continue
 			}
 			log.Printf("Executing command: %s", cmdStruct.Command)
-			cmd = exec.Command("/bin/bash", "-c", cmdStruct.Command)
+			args := getCommandArgs(cmdStruct.Command)
+			cmd = exec.Command(shell, args...)
 			if req.WantReply {
 				req.Reply(true, nil)
 			}
@@ -235,7 +204,9 @@ func (s *SSHServer) handleChannelRequests(channel ssh.Channel, requests <-chan *
 				}{}
 				if err := ssh.Unmarshal(req.Payload, &winChReq); err == nil {
 					log.Printf("Window size changed: %dx%d", winChReq.Width, winChReq.Height)
-					setTerminalSize(os.Stdout, int(winChReq.Width), int(winChReq.Height))
+					if err := setWinsize(os.Stdout, int(winChReq.Width), int(winChReq.Height)); err != nil {
+						log.Printf("Failed to set window size: %v", err)
+					}
 					ok = true
 				}
 			}
@@ -254,11 +225,15 @@ func (s *SSHServer) handleShell(channel ssh.Channel, cmd *exec.Cmd) {
 	var stdout, stderr io.ReadCloser
 	var err error
 
+	// Set up platform-specific process attributes (non-PTY mode)
+	setupProcessAttributes(cmd, false)
+
 	// Only create pipes if they haven't been set
 	if cmd.Stdin == nil {
 		stdin, err = cmd.StdinPipe()
 		if err != nil {
 			log.Printf("Failed to create stdin pipe: %v", err)
+			channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{1}))
 			return
 		}
 	}
@@ -266,6 +241,7 @@ func (s *SSHServer) handleShell(channel ssh.Channel, cmd *exec.Cmd) {
 		stdout, err = cmd.StdoutPipe()
 		if err != nil {
 			log.Printf("Failed to create stdout pipe: %v", err)
+			channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{1}))
 			return
 		}
 	}
@@ -273,6 +249,7 @@ func (s *SSHServer) handleShell(channel ssh.Channel, cmd *exec.Cmd) {
 		stderr, err = cmd.StderrPipe()
 		if err != nil {
 			log.Printf("Failed to create stderr pipe: %v", err)
+			channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{1}))
 			return
 		}
 	}
@@ -280,87 +257,74 @@ func (s *SSHServer) handleShell(channel ssh.Channel, cmd *exec.Cmd) {
 	// Start the command
 	if err := cmd.Start(); err != nil {
 		log.Printf("Failed to start command: %v", err)
+		channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{1}))
 		return
 	}
-	log.Printf("Command started successfully")
 
-	// Create a WaitGroup to ensure all copies complete
+	// Copy data between pipes and SSH channel
 	var wg sync.WaitGroup
-	wg.Add(2) // Only wait for stdout/stderr
+	wg.Add(3) // Changed from 2 to 3 to include stderr
 
-	// Copy stdin from SSH to command in a separate goroutine
-	if stdin != nil {
-		go func() {
-			io.Copy(stdin, channel)
-			stdin.Close()
-			log.Printf("Stdin copy complete")
-		}()
-	}
+	go func() {
+		defer wg.Done()
+		io.Copy(stdin, channel)
+		stdin.Close()
+	}()
 
-	// Copy stdout from command to SSH
-	if stdout != nil {
-		go func() {
-			defer func() {
-				wg.Done()
-				log.Printf("Stdout copy complete")
-			}()
-			io.Copy(channel, stdout)
-		}()
-	} else {
-		wg.Done()
-	}
+	go func() {
+		defer wg.Done()
+		io.Copy(channel, stdout)
+	}()
 
-	// Copy stderr from command to SSH
-	if stderr != nil {
-		go func() {
-			defer func() {
-				wg.Done()
-				log.Printf("Stderr copy complete")
-			}()
-			io.Copy(channel.Stderr(), stderr)
-		}()
-	} else {
-		wg.Done()
-	}
+	go func() {
+		defer wg.Done()
+		io.Copy(channel.Stderr(), stderr)
+	}()
 
 	// Wait for command to finish
 	err = cmd.Wait()
+	log.Printf("Command finished, checking exit status")
+
+	var exitCode uint32
 	if err != nil {
-		log.Printf("Command failed: %v", err)
+		log.Printf("Command returned error: %v", err)
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			if status, ok := exitErr.Sys().(syscall.WaitStatus); ok {
-				channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{uint32(status.ExitStatus())}))
+			code, ok := getExitStatus(exitErr)
+			if ok {
+				exitCode = code
+				log.Printf("Got exit code from error: %d", exitCode)
+			} else {
+				exitCode = 1
+				log.Printf("Could not get exit code from error, using: %d", exitCode)
 			}
+		} else {
+			exitCode = 1
+			log.Printf("Non-exit error occurred, using exit code: %d", exitCode)
 		}
 	} else {
-		log.Printf("Command completed successfully")
-		channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{0}))
+		// Try to get exit code from shell if available
+		if shell, ok := cmd.Stdin.(interface{ GetExitCode() (uint32, error) }); ok {
+			if code, err := shell.GetExitCode(); err == nil {
+				exitCode = code
+				log.Printf("Got exit code from shell: %d", exitCode)
+			} else {
+				exitCode = uint32(cmd.ProcessState.ExitCode())
+				log.Printf("Using ProcessState exit code: %d", exitCode)
+			}
+		} else {
+			exitCode = uint32(cmd.ProcessState.ExitCode())
+			log.Printf("Using ProcessState exit code: %d", exitCode)
+		}
 	}
 
-	// Wait for stdout/stderr copies to complete with timeout
-	done := make(chan struct{})
-	go func() {
-		wg.Wait()
-		close(done)
-	}()
+	// Send the exit status
+	log.Printf("Sending exit status: %d", exitCode)
+	channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{exitCode}))
 
-	select {
-	case <-done:
-		log.Printf("All copies complete")
-	case <-time.After(100 * time.Millisecond):
-		log.Printf("Copy timeout, closing channel")
-	}
-}
+	// Wait for all goroutines to finish
+	wg.Wait()
 
-func setTerminalSize(f *os.File, w, h int) {
-	ws := struct {
-		rows    uint16
-		cols    uint16
-		xpixels uint16
-		ypixels uint16
-	}{
-		rows: uint16(h),
-		cols: uint16(w),
-	}
-	syscall.Syscall(syscall.SYS_IOCTL, f.Fd(), uintptr(syscall.TIOCSWINSZ), uintptr(unsafe.Pointer(&ws)))
+	// Close the channel to ensure clean shutdown
+	channel.Close()
+	log.Printf("Shell handler completed")
 }
