@@ -19,3 +19,11 @@
 13. Pin all dependency versions in go.mod
 14. Include proper error handling and logging
 15. Write tests for all functionality
+
+<calling_external_packages>
+ALWAYS explain package suggestions with:
+1. Package popularity metrics (stars, major users)
+2. How it will simplify the code
+3. What problems it solves
+4. Why it's the right choice for the task
+</calling_external_packages>
