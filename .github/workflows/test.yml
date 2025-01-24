@@ -19,12 +19,23 @@ jobs:
         uses: actions/setup-go@v4
         with:
           go-version: '1.21'
+          cache: false  # Disable built-in cache to use our own
+
+      - name: Go Cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
 
       - name: Generate SSH Key
         run: ssh-keygen -t rsa -f host.key -N ""
 
       - name: Get dependencies
-        run: go get -v ./...
+        run: go mod download
 
       - name: Run tests
         run: go test -v ./... 
