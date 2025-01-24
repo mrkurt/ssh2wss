@@ -22,6 +22,22 @@ import (
 	"golang.org/x/net/websocket"
 )
 
+// checkGoroutineLeak helps detect goroutine leaks
+func checkGoroutineLeak(t *testing.T) func() {
+	initialGoroutines := runtime.NumGoroutine()
+	return func() {
+		time.Sleep(100 * time.Millisecond) // Give goroutines time to clean up
+		finalGoroutines := runtime.NumGoroutine()
+		if finalGoroutines > initialGoroutines {
+			// Get stack traces of all goroutines
+			buf := make([]byte, 1<<20)
+			n := runtime.Stack(buf, true)
+			t.Errorf("Goroutine leak: had %d, now have %d goroutines\nStack traces:\n%s",
+				initialGoroutines, finalGoroutines, string(buf[:n]))
+		}
+	}
+}
+
 // Default ports used by the actual tool
 const (
 	DefaultSSHPort = 2222
@@ -48,6 +64,8 @@ func getFreePorts(t *testing.T) (sshPort, wsPort int) {
 }
 
 func TestBridge(t *testing.T) {
+	defer checkGoroutineLeak(t)()
+
 	// Get dynamic ports for testing
 	testSSHPort, testWSPort := getFreePorts(t)
 

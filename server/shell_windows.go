@@ -91,14 +91,21 @@ func (s *Shell) Close() error {
 		s.stdin = nil
 	}
 
-	// Kill the process if it's still running
+	// Wait for the process to finish naturally
 	if s.cmd != nil && s.cmd.Process != nil {
-		s.cmd.Process.Kill()
-		// Wait for the process to finish
+		// Try graceful termination first
+		if err := s.cmd.Process.Signal(os.Interrupt); err != nil {
+			// If interrupt fails, try termination
+			if err := s.cmd.Process.Signal(syscall.SIGTERM); err != nil {
+				// If termination fails, force kill as last resort
+				s.cmd.Process.Kill()
+			}
+		}
+		// Wait for the process to finish and get its exit status
 		s.cmd.Wait()
 	}
 
-	// Finally close stdout
+	// Close stdout
 	if s.stdout != nil {
 		s.stdout.Close()
 		s.stdout = nil
@@ -162,9 +169,15 @@ func findInPath(exe string) string {
 }
 
 // GetExitCode returns the process exit code
-func (s *Shell) GetExitCode() (uint32, error) {
-	if s.cmd == nil || s.cmd.ProcessState == nil {
-		return 0, fmt.Errorf("process not started or not finished")
+func (s *Shell) GetExitCode() int {
+	if s.cmd == nil {
+		return -1
 	}
-	return uint32(s.cmd.ProcessState.ExitCode()), nil
+	if s.cmd.ProcessState == nil {
+		return -1
+	}
+	if status, ok := s.cmd.ProcessState.Sys().(syscall.WaitStatus); ok {
+		return status.ExitStatus()
+	}
+	return -1
 }

@@ -127,4 +127,47 @@ func TestWindowsShell(t *testing.T) {
 			t.Errorf("Expected last argument to contain command, got: %v", cmdArgs)
 		}
 	})
+
+	// Test exit codes
+	t.Run("Exit Codes", func(t *testing.T) {
+		tests := []struct {
+			name     string
+			command  string
+			wantCode int
+		}{
+			{"Success", "cmd.exe /c exit 0", 0},
+			{"Error", "cmd.exe /c exit 1", 1},
+			{"Custom Code", "cmd.exe /c exit 42", 42},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				shell, err := NewShell(80, 24)
+				if err != nil {
+					t.Fatalf("Failed to create shell: %v", err)
+				}
+
+				err = shell.Start(tt.command)
+				if err != nil {
+					t.Fatalf("Failed to start command: %v", err)
+				}
+
+				// Read any output to ensure command completes
+				buf := make([]byte, 1024)
+				for {
+					_, err := shell.Read(buf)
+					if err != nil {
+						break // EOF is expected
+					}
+				}
+
+				// Close shell and check exit code
+				shell.Close()
+				gotCode := shell.GetExitCode()
+				if gotCode != tt.wantCode {
+					t.Errorf("GetExitCode() = %v, want %v", gotCode, tt.wantCode)
+				}
+			})
+		}
+	})
 }

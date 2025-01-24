@@ -288,9 +288,10 @@ func (s *SSHServer) handleShell(channel ssh.Channel, cmd *exec.Cmd) {
 		}
 	} else {
 		// Try to get exit code from shell if available
-		if shell, ok := cmd.Stdin.(interface{ GetExitCode() (uint32, error) }); ok {
-			if code, err := shell.GetExitCode(); err == nil {
-				exitCode = code
+		if shell, ok := cmd.Stdin.(interface{ GetExitCode() int }); ok {
+			code := shell.GetExitCode()
+			if code >= 0 {
+				exitCode = uint32(code)
 			} else {
 				exitCode = uint32(cmd.ProcessState.ExitCode())
 			}

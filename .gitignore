@@ -25,4 +25,6 @@ go.work
 dev.log
 DEVELOPMENT.md
 
-tmp/ 
+tmp/
+
+debug-notes.md 
