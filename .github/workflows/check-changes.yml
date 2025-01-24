@@ -11,7 +11,7 @@ on:
         value: ${{ jobs.check.outputs.release_notes }}
     secrets:
       ANTHROPIC_API_KEY:
-        required: false  # Make the API key optional
+        required: false
 
 jobs:
   check:
@@ -26,26 +26,11 @@ jobs:
       - uses: denoland/setup-deno@v1
         with:
           deno-version: 2.x
-      - name: Debug Secrets
-        run: |
-          if [ -n "${{ secrets.ANTHROPIC_API_KEY }}" ]; then
-            echo "ANTHROPIC_API_KEY is set"
-          else
-            echo "ANTHROPIC_API_KEY is not set"
-          fi
       - name: Verify Changes
         id: verify-changes
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
-          set -x  # Enable command echo
-          if ./scripts/check-changes; then
-            echo "has_substantial_changes=true" >> $GITHUB_OUTPUT
-            {
-              echo "release_notes<<EOF"
-              cat release_notes.txt
-              echo "EOF"
-            } >> $GITHUB_OUTPUT
-          else
-            echo "has_substantial_changes=false" >> $GITHUB_OUTPUT
-          fi 
+          ./scripts/check-changes
+          echo "GitHub output file contents:"
+          cat $GITHUB_OUTPUT

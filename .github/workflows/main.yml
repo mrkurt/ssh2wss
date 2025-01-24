@@ -14,7 +14,6 @@ jobs:
 
  check-changes:
    needs: test
-   if: github.ref == 'refs/heads/main'
    uses: ./.github/workflows/check-changes.yml
    secrets: inherit
 
@@ -28,3 +27,14 @@ jobs:
    uses: ./.github/workflows/release.yml
    with:
      release_notes: ${{ needs.check-changes.outputs.release_notes }}
+
+ would-release:
+   needs: check-changes
+   if: |
+     github.ref != 'refs/heads/main' && 
+     needs.check-changes.outputs.has_substantial_changes == 'true'
+   runs-on: ubuntu-latest
+   steps:
+     - run: |
+         echo "This branch has changes that would trigger a release on main:"
+         echo "${{ needs.check-changes.outputs.release_notes }}"
