@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 )
 
 func TestBridge(t *testing.T) {
@@ -22,13 +23,37 @@ func TestBridge(t *testing.T) {
 		t.Fatalf("Failed to create bridge: %v", err)
 	}
 
+	// Create a channel to signal bridge startup
+	bridgeReady := make(chan struct{})
+
 	// Start bridge in goroutine
 	go func() {
 		defer trackOperation("Bridge.Start")()
+
+		// Signal when the bridge is ready
+		go func() {
+			// Wait for both servers to be ready
+			for {
+				if bridge.sshServer != nil && bridge.wsServer != nil {
+					close(bridgeReady)
+					return
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+		}()
+
 		if err := bridge.Start(); err != nil && !errors.Is(err, context.Canceled) {
 			t.Errorf("Bridge start failed: %v", err)
 		}
 	}()
+
+	// Wait for bridge to be ready
+	select {
+	case <-bridgeReady:
+		t.Log("Bridge is ready")
+	case <-time.After(5 * time.Second):
+		t.Fatal("Bridge failed to start within timeout")
+	}
 
 	// Run subtests
 	t.Run("Command_Execution", func(t *testing.T) {

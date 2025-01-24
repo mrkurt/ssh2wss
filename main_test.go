@@ -18,6 +18,8 @@ import (
 	"ssh2wss/auth"
 	"ssh2wss/server"
 
+	"bufio"
+
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/net/websocket"
 )
@@ -233,15 +235,65 @@ func TestBridge(t *testing.T) {
 					tt.command)
 
 				t.Logf("Running SSH command: %v", sshCmd.Args)
-				output, err := sshCmd.CombinedOutput()
-				t.Logf("SSH command completed with error: %v", err)
+
+				// Set up pipes for stdout and stderr
+				stdout, err := sshCmd.StdoutPipe()
 				if err != nil {
-					t.Fatalf("SSH command failed: %v\nOutput: %s", err, output)
+					t.Fatalf("Failed to create stdout pipe: %v", err)
+				}
+				stderr, err := sshCmd.StderrPipe()
+				if err != nil {
+					t.Fatalf("Failed to create stderr pipe: %v", err)
 				}
 
-				t.Logf("Command output: %s", string(output))
-				if !strings.Contains(string(output), tt.expected) {
-					t.Errorf("Expected output to contain %q, got %q", tt.expected, string(output))
+				// Start the command
+				if err := sshCmd.Start(); err != nil {
+					t.Fatalf("Failed to start SSH command: %v", err)
+				}
+
+				// Create a channel to signal when output processing is done
+				outputDone := make(chan struct{})
+
+				// Process output in a goroutine
+				var output bytes.Buffer
+				go func() {
+					defer close(outputDone)
+
+					// Copy stdout and stderr to both t.Log and our output buffer
+					go func() {
+						scanner := bufio.NewScanner(stdout)
+						for scanner.Scan() {
+							line := scanner.Text()
+							t.Logf("stdout: %s", line)
+							output.WriteString(line + "\n")
+						}
+					}()
+
+					go func() {
+						scanner := bufio.NewScanner(stderr)
+						for scanner.Scan() {
+							line := scanner.Text()
+							t.Logf("stderr: %s", line)
+							output.WriteString(line + "\n")
+						}
+					}()
+				}()
+
+				// Wait for command to complete
+				err = sshCmd.Wait()
+				t.Logf("SSH command completed with error: %v", err)
+				if err != nil {
+					t.Fatalf("SSH command failed: %v", err)
+				}
+
+				// Wait for output processing to complete
+				<-outputDone
+
+				// Check output
+				outputStr := output.String()
+				t.Logf("Command output: %s", outputStr)
+				if !strings.Contains(outputStr, tt.expected) {
+					t.Errorf("Expected output to contain %q, got %q", tt.expected, outputStr)
 				}
 				t.Logf("Test completed successfully")
 			})
