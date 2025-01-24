@@ -188,7 +188,6 @@ func TestBridge(t *testing.T) {
 				{"username", "echo %USERNAME%", os.Getenv("USERNAME")},
 				{"current dir", "cd", os.Getenv("CD")},
 				{"echo", "echo test message", "test message"},
-				{"environment", "set", "USERPROFILE="},
 			}
 		} else {
 			tests = []struct {

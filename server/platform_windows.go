@@ -31,13 +31,8 @@ func getExitStatus(err *exec.ExitError) (uint32, bool) {
 
 // setupProcessAttributes configures platform-specific process attributes
 func setupProcessAttributes(cmd *exec.Cmd, isPty bool) {
-	if isPty {
-		// PTY mode - no special flags needed
-		cmd.SysProcAttr = &syscall.SysProcAttr{}
-	} else {
-		// Non-PTY mode - create new process group
-		cmd.SysProcAttr = &syscall.SysProcAttr{
-			CreationFlags: syscall.CREATE_NEW_PROCESS_GROUP,
-		}
+	// For both PTY and non-PTY mode, just use basic process attributes
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		HideWindow: true,
 	}
 }

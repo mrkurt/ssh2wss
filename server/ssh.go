@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"sync"
-	"syscall"
 
 	"github.com/creack/pty"
 	"golang.org/x/crypto/ssh"
@@ -156,8 +155,8 @@ func (s *SSHServer) handleChannelRequests(channel ssh.Channel, requests <-chan *
 				err = cmd.Wait()
 				if err != nil {
 					if exitErr, ok := err.(*exec.ExitError); ok {
-						if status, ok := exitErr.Sys().(syscall.WaitStatus); ok {
-							channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{uint32(status.ExitStatus())}))
+						if status, ok := getExitStatus(exitErr); ok {
+							channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{status}))
 						}
 					}
 				} else {
@@ -188,7 +187,7 @@ func (s *SSHServer) handleChannelRequests(channel ssh.Channel, requests <-chan *
 			return
 
 		case "window-change":
-			if cmd != nil && cmd.Process != nil {
+			if ptyReq && cmd != nil && cmd.Process != nil {
 				winChReq := struct {
 					Width  uint32
 					Height uint32
@@ -196,7 +195,7 @@ func (s *SSHServer) handleChannelRequests(channel ssh.Channel, requests <-chan *
 					Y      uint32
 				}{}
 				if err := ssh.Unmarshal(req.Payload, &winChReq); err == nil {
-					if err := setWinsize(os.Stdout, int(winChReq.Width), int(winChReq.Height)); err != nil {
+					if err := setWinsize(ptmx, int(winChReq.Width), int(winChReq.Height)); err != nil {
 						log.Printf("Failed to set window size: %v", err)
 					}
 					ok = true

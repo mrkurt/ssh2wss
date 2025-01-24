@@ -108,27 +108,23 @@ func (s *Shell) WindowSize() (width, height uint16) {
 }
 
 func getDefaultShell() string {
+	// Use cmd.exe as the default shell on Windows
+	if comspec := os.Getenv("COMSPEC"); comspec != "" {
+		return comspec
+	}
 	return "cmd.exe"
 }
 
 func getShellArgs(isLogin bool) []string {
-	shell := filepath.Base(getDefaultShell())
-	switch shell {
-	case "pwsh.exe", "powershell.exe":
-		return []string{"-NoLogo", "-NoProfile", "-NonInteractive"}
-	default:
-		return []string{"/Q"}
+	if isLogin {
+		return []string{"/c"}
 	}
+	return []string{"/c"}
 }
 
 func getCommandArgs(command string) []string {
-	shell := filepath.Base(getDefaultShell())
-	switch shell {
-	case "pwsh.exe", "powershell.exe":
-		return []string{"-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command}
-	default:
-		return []string{"/C", command}
-	}
+	// On Windows, wrap the command in cmd.exe /c to handle built-in commands
+	return []string{"/c", command}
 }
 
 // findInPath looks for an executable in PATH
