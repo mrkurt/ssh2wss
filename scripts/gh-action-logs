@@ -1,12 +1,18 @@
-#!/usr/bin/env -S deno run --allow-run --allow-net=api.github.com
+#!/usr/bin/env -S deno run --allow-run --allow-net=api.github.com --allow-write=tmp
 
 // @ts-ignore: Deno namespace
 declare const Deno: {
-  Command: new (cmd: string, options: { args: string[] }) => {
-    output(): Promise<{ stdout: Uint8Array }>;
+  Command: new (cmd: string, options: { 
+    args: string[];
+    stdout?: "piped" | "inherit" | "null";
+    stderr?: "piped" | "inherit" | "null";
+  }) => {
+    output(): Promise<{ stdout: Uint8Array; stderr: Uint8Array }>;
   };
   exit(code: number): never;
   args: string[];
+  mkdir(path: string, options?: { recursive?: boolean }): Promise<void>;
+  writeTextFile(path: string, data: string): Promise<void>;
 };
 
 const STATUS_EMOJI = {
@@ -85,7 +91,45 @@ async function getAnnotationsForJob(jobId: number): Promise<string[]> {
   return text ? text.split("\n") : [];
 }
 
+// Command to dump all job logs for inspection:
+// mkdir -p tmp && gh api repos/mrkurt/ssh2wss/actions/runs -q '.workflow_runs[].id' | while read run_id; do \
+//   gh api "/repos/mrkurt/ssh2wss/actions/runs/$run_id/jobs" -q '.jobs[].id' | while read job_id; do \
+//     gh api "/repos/mrkurt/ssh2wss/actions/jobs/$job_id/logs" > "tmp/action-logs-$job_id.txt" || true; \
+//   done; \
+// done
+
+async function getJobLogs(jobId: number): Promise<string> {
+  const process = new Deno.Command("gh", {
+    args: ["api", `/repos/mrkurt/ssh2wss/actions/jobs/${jobId}/logs`],
+    stderr: "piped",
+  });
+  const { stdout } = await process.output();
+  const output = new TextDecoder().decode(stdout);
+  
+  // Split into groups and filter for ones that end with ##[error]
+  const groups = output.split(/##\[group\]/g).slice(1); // slice(1) to skip first empty chunk
+  const errorGroups = groups.filter(group => group.includes("##[error]"));
+  
+  // For each error group, keep everything up to ##[error] and strip timestamps
+  const cleanedGroups = errorGroups.map(group => {
+    const errorContent = group.split("##[error]")[0]; // Keep everything before ##[error]
+    return errorContent
+      .split("\n")
+      .map(line => line.split(/\s+/).slice(1).join(" ")) // Remove timestamp
+      .join("\n")
+      .trim();
+  });
+
+  if (Deno.args.includes("--show-all-logs")) {
+    return groups.join("\n\n");
+  }
+
+  return cleanedGroups.join("\n\n") || "No error logs found";
+}
+
 async function watchRun(run: Run): Promise<boolean> {
+  const showAnnotations = Deno.args.includes("--show-annotations");
+  
   // Use conclusion emoji for completed runs
   const emoji = run.status === "completed" && run.conclusion 
     ? STATUS_EMOJI[run.conclusion as keyof typeof STATUS_EMOJI] 
@@ -102,12 +146,21 @@ async function watchRun(run: Run): Promise<boolean> {
       
     console.log(`  ${jobEmoji} ${job.name} (Job #${job.id})`);
     if (job.status === "completed") {
-      const annotations = await getAnnotationsForJob(job.id);
-      if (annotations.length > 0) {
-        console.log("    Annotations:");
-        for (const annotation of annotations) {
-          console.log(`      - ${annotation}`);
+      if (showAnnotations) {
+        const annotations = await getAnnotationsForJob(job.id);
+        if (annotations.length > 0) {
+          console.log("    Annotations:");
+          for (const annotation of annotations) {
+            console.log(`      - ${annotation}`);
+          }
         }
+      }
+      
+      // Show full logs for failed jobs
+      if (job.conclusion === "failure") {
+        console.log("\n    Full job logs:");
+        const logs = await getJobLogs(job.id);
+        console.log(logs.split("\n").map(line => `      ${line}`).join("\n"));
       }
     }
   }
@@ -169,13 +222,17 @@ async function listRecentRuns(): Promise<void> {
     return;
   }
 
-  for (const run of runs) {
-    const emoji = run.conclusion ? STATUS_EMOJI[run.conclusion as keyof typeof STATUS_EMOJI] : "❓";
-    console.log(`${emoji} #${run.databaseId} [${run.headBranch}] ${run.name}`);
+  // Find most recent failed run
+  const recentFailedRun = runs.find(run => run.conclusion === "failure");
+  if (recentFailedRun) {
+    console.log("Most recent failed run:");
+    await watchRun(recentFailedRun);
+  } else {
+    console.log("No failed runs found in recent history");
   }
 }
 
-async function main() {
+async function actionLogsMain() {
   const watch = Deno.args.includes("--watch");
 
   try {
@@ -229,5 +286,5 @@ async function main() {
 
 // @ts-ignore: Deno import.meta
 if (import.meta.main) {
-  main();
+  actionLogsMain();
 } 
