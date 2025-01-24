@@ -174,28 +174,23 @@ func TestWindowsShell(t *testing.T) {
 
 func TestWindowsExitCodes(t *testing.T) {
 	tests := []struct {
-		name     string
-		command  string
-		wantCode int
+		name    string
+		command string
+		want    int
 	}{
-		// Internal commands
-		{"dir success", "dir", 0},
-		{"dir failure", "dir /nonexistentflag", 1},
-		{"echo success", "echo test", 0},
-		{"cd success", "cd .", 0},
-		{"cd failure", "cd /nonexistent", 1},
-
-		// External commands
-		{"whoami success", "whoami", 0},
-		{"nonexistent command", "nonexistentcommand", 1},
-		{"ping success", "ping -n 1 127.0.0.1", 0},
-		{"ping failure", "ping -n 1 invalid.local", 1},
-
-		// Complex commands
-		{"multiple commands success", "echo test && dir", 0},
-		{"multiple commands failure", "echo test && nonexistentcommand", 1},
-		{"pipe success", "dir | find \"Windows\"", 0},
-		{"pipe failure", "dir | find \"nonexistentstring\"", 1},
+		{"dir_success", "dir", 0},
+		{"dir_failure", "dir /invalid", 1},
+		{"echo_success", "echo test", 0},
+		{"cd_success", "cd .", 0},
+		{"cd_failure", "cd /nonexistent", 1},
+		{"whoami_success", "whoami", 0},
+		{"nonexistent_command", "nonexistentcommand", 1},
+		{"ping_success", "ping -n 1 127.0.0.1", 0},
+		{"ping_failure", "ping -n 1 invalid.local", 1},
+		{"multiple_commands_success", "echo test && dir", 0},
+		{"multiple_commands_failure", "echo test && dir /invalid", 1},
+		{"pipe_success", "dir | find \"Windows\"", 0},
+		{"pipe_failure", "dir | find \"NonexistentString\"", 1},
 	}
 
 	for _, tt := range tests {
@@ -206,26 +201,26 @@ func TestWindowsExitCodes(t *testing.T) {
 			}
 			defer shell.Close()
 
-			err = shell.Start(tt.command)
-			if err != nil {
+			if err := shell.Start(tt.command); err != nil {
 				t.Fatalf("Failed to start command: %v", err)
 			}
 
 			// Read all output to ensure command completes
-			buf := make([]byte, 1024)
+			buf := make([]byte, 4096)
 			for {
 				_, err := shell.Read(buf)
 				if err != nil {
-					break // EOF is expected
+					break
 				}
 			}
 
-			// Close shell and check exit code
-			shell.Close()
-			gotCode := shell.GetExitCode()
+			// Close stdin to ensure command finishes
+			shell.stdin.Close()
 
-			if gotCode != tt.wantCode {
-				t.Errorf("Command %q: got exit code %d, want %d", tt.command, gotCode, tt.wantCode)
+			// Wait for command to complete
+			exitCode := shell.GetExitCode()
+			if exitCode != tt.want {
+				t.Errorf("Command %q: got exit code %d, want %d", tt.command, exitCode, tt.want)
 			}
 		})
 	}

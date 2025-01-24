@@ -47,14 +47,20 @@ func (s *Shell) Start(command string) error {
 	}
 	s.stdout = or
 
+	// Get the full path to cmd.exe
+	cmdPath := findInPath("cmd.exe")
+	if cmdPath == "" {
+		cmdPath = `C:\Windows\System32\cmd.exe` // Fallback to default location
+	}
+
 	// Create the command
 	var cmd *exec.Cmd
 	if isInternalCommand(command) {
 		// For internal commands like dir, echo, etc., use cmd.exe /c
-		cmd = exec.Command("cmd.exe", "/c", command)
+		cmd = exec.Command(cmdPath, "/c", command)
 	} else {
-		// For external commands, execute directly
-		cmd = exec.Command(command)
+		// For external commands, still use cmd.exe to handle pipes and redirections
+		cmd = exec.Command(cmdPath, "/c", command)
 	}
 	s.cmd = cmd
 
@@ -154,11 +160,12 @@ func getCommandArgs(command string) []string {
 
 // findInPath looks for an executable in PATH
 func findInPath(exe string) string {
-	// Check common locations first
+	// Check common Windows locations first
 	commonPaths := []string{
-		`C:\Program Files\PowerShell\7`,
-		`C:\Windows\System32\WindowsPowerShell\v1.0`,
 		`C:\Windows\System32`,
+		`C:\Windows`,
+		`C:\Windows\System32\WindowsPowerShell\v1.0`,
+		`C:\Program Files\PowerShell\7`,
 	}
 
 	for _, dir := range commonPaths {

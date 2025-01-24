@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -64,7 +65,9 @@ func (s *SSHServer) Start(ctx context.Context) error {
 			case <-shutdown:
 				return nil // Clean shutdown
 			default:
-				log.Printf("Failed to accept connection: %v", err)
+				if !errors.Is(err, net.ErrClosed) {
+					log.Printf("Failed to accept connection: %v", err)
+				}
 				continue
 			}
 		}
@@ -291,25 +294,35 @@ func (s *SSHServer) handleShell(channel ssh.Channel, cmd *exec.Cmd) {
 	var exitCode uint32
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			code, ok := getExitStatus(exitErr)
-			if ok {
-				exitCode = code
+			// Try to get exit code from shell first
+			if shell, ok := cmd.Stdin.(interface{ GetExitCode() int }); ok {
+				code := shell.GetExitCode()
+				if code >= 0 {
+					exitCode = uint32(code)
+				} else {
+					// Fallback to process state
+					exitCode = uint32(exitErr.ExitCode())
+				}
 			} else {
-				exitCode = 1
+				// No shell interface, use process state
+				exitCode = uint32(exitErr.ExitCode())
 			}
 		} else {
+			// Non-exit error, use code 1
 			exitCode = 1
 		}
 	} else {
-		// Try to get exit code from shell if available
+		// Command succeeded, try shell exit code first
 		if shell, ok := cmd.Stdin.(interface{ GetExitCode() int }); ok {
 			code := shell.GetExitCode()
 			if code >= 0 {
 				exitCode = uint32(code)
 			} else {
+				// Fallback to process state
 				exitCode = uint32(cmd.ProcessState.ExitCode())
 			}
 		} else {
+			// No shell interface, use process state
 			exitCode = uint32(cmd.ProcessState.ExitCode())
 		}
 	}

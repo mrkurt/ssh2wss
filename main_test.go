@@ -263,7 +263,7 @@ func TestBridge(t *testing.T) {
 			"-p", fmt.Sprintf("%d", testSSHPort),
 			"-o", "StrictHostKeyChecking=no",
 			"-o", "UserKnownHostsFile="+knownHostsFile,
-			"-o", "LogLevel=DEBUG3",
+			"-o", "LogLevel=ERROR",
 			"localhost")
 
 		stdin, err := sshCmd.StdinPipe()
