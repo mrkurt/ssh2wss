@@ -85,15 +85,25 @@ func (s *Shell) Write(p []byte) (int, error) {
 }
 
 func (s *Shell) Close() error {
-	if s.cmd != nil && s.cmd.Process != nil {
-		s.cmd.Process.Kill()
-	}
+	// Close stdin first to signal EOF to the process
 	if s.stdin != nil {
 		s.stdin.Close()
+		s.stdin = nil
 	}
+
+	// Kill the process if it's still running
+	if s.cmd != nil && s.cmd.Process != nil {
+		s.cmd.Process.Kill()
+		// Wait for the process to finish
+		s.cmd.Wait()
+	}
+
+	// Finally close stdout
 	if s.stdout != nil {
 		s.stdout.Close()
+		s.stdout = nil
 	}
+
 	return nil
 }
 

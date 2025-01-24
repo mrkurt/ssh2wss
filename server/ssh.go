@@ -94,6 +94,7 @@ func (s *SSHServer) handleConnection(conn net.Conn) {
 func (s *SSHServer) handleChannelRequests(channel ssh.Channel, requests <-chan *ssh.Request) {
 	var cmd *exec.Cmd
 	var ptyReq bool
+	var ptmx *os.File
 	shell := getDefaultShell()
 
 	defer func() {
