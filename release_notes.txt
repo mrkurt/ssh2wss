@@ -1,0 +1,42 @@
+ssh2wss: WebSocket to SSH bridge for proxied connections
+
+Implements a bridge that tunnels SSH connections through WebSocket proxies,
+allowing SSH access in environments where direct connections are blocked.
+
+ssh: core functionality
+- tunnels SSH traffic through WebSocket proxies
+- maintains end-to-end encryption
+- handles connection multiplexing
+
+auth: key-based authentication
+- uses standard OpenSSH key formats
+- supports multiple auth methods
+- handles key rotation
+
+pty: terminal handling
+- full pseudo-terminal support
+- window size management
+- ANSI/color support
+- interactive command execution
+
+client: OpenSSH compatibility
+- works with standard SSH clients
+- no client modifications needed
+- native SSH experience
+
+proxy: built-in support
+- automatic proxy detection
+- proxy auth handling
+- configurable settings
+
+Implementation uses Go's stdlib crypto/ssh package for SSH protocol handling,
+providing native support for SSH key formats and cryptographic operations.
+
+Architecture:
+1. SSH server - auth and terminal sessions
+2. WebSocket bridge - connection proxying
+3. Auth system - key management
+
+This release enables SSH access through WebSocket proxies in restricted networks.
+
+For a detailed list of changes, see: https://github.com/mrkurt/ssh2wss/compare/3398bc4d6809639192b0869548fa75dbb3fbca24...HEAD

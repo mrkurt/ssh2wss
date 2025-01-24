@@ -21,7 +21,7 @@ jobs:
 
   release:
     needs: check-changes
-    if: needs.check-changes.outputs.has_changes == 'true'
+    if: needs.check-changes.outputs.has_substantial_changes == 'true'
     permissions:
       contents: write  # Explicitly pass write permission to release workflow
     uses: ./.github/workflows/release.yml

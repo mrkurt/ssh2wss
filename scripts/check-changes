@@ -272,8 +272,29 @@ function getCommitEmoji(subject: string): string {
   return "🔨";
 }
 
+async function getStartingCommit(): Promise<string> {
+  try {
+    // Try to get the most recent tag
+    const process = new Deno.Command("git", {
+      args: ["describe", "--tags", "--abbrev=0"],
+      stderr: "null",
+    });
+    const { stdout } = await process.output();
+    return new TextDecoder().decode(stdout).trim();
+  } catch {
+    // If no tags exist, get the first commit
+    const process = new Deno.Command("git", {
+      args: ["rev-list", "--max-parents=0", "HEAD"],
+      stderr: "null",
+    });
+    const { stdout } = await process.output();
+    return new TextDecoder().decode(stdout).trim();
+  }
+}
+
 async function checkChangesMain() {
-  const startCommit = Deno.args[0];
+  // Get the starting commit - either from args or find it automatically
+  const startCommit = Deno.args[0] || await getStartingCommit();
   const commits = await getCommitHistory(startCommit);
   
   // Aggregate changes across all commits
@@ -354,12 +375,16 @@ async function checkChangesMain() {
 
   if (totalChanges > 1000) {
     console.log("\n✨ Changes exceed threshold - release recommended");
-  }
-
-  // Generate release notes if API key exists
-  if (Deno.env.get("ANTHROPIC_API_KEY")) {
-    console.log("\n🤖 Generating release notes with Claude API...");
-    await generateReleaseNotes(commits);
+    
+    // Only generate release notes if threshold exceeded and API key exists
+    if (Deno.env.get("ANTHROPIC_API_KEY")) {
+      console.log("\n🤖 Generating release notes with Claude API...");
+      const notes = await generateReleaseNotes(commits);
+      await Deno.writeTextFile("release_notes.txt", notes);
+    } else {
+      console.error("\n❌ Error: ANTHROPIC_API_KEY not set but release notes are needed");
+      Deno.exit(1);
+    }
   }
 }
 
