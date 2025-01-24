@@ -5,6 +5,7 @@ on:
 
 jobs:
  test:
+   timeout-minutes: 5  # Add timeout of 5 minutes
    strategy:
      matrix:
        os: [ubuntu-latest, windows-latest]
