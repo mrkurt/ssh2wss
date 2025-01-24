@@ -1,40 +1,49 @@
 name: CI/CD Pipeline
 
 on:
- push:
- pull_request:
- workflow_dispatch:
+  push:
+  pull_request:
+  workflow_dispatch:
 
 permissions:
- contents: write
+  contents: write
 
 jobs:
- test:
-   uses: ./.github/workflows/test.yml
+  build:
+    name: 🔨 Build
+    uses: ./.github/workflows/build.yml
 
- check-changes:
-   needs: test
-   uses: ./.github/workflows/check-changes.yml
-   secrets: inherit
+  test:
+    name: 🧪 Test
+    needs: build
+    uses: ./.github/workflows/test.yml
 
- release:
-   needs: check-changes
-   if: |
-     github.ref == 'refs/heads/main' && 
-     needs.check-changes.outputs.has_substantial_changes == 'true'
-   permissions:
-     contents: write
-   uses: ./.github/workflows/release.yml
-   with:
-     release_notes: ${{ needs.check-changes.outputs.release_notes }}
+  check_changes:
+    name: 🔍 Check Changes
+    needs: test
+    uses: ./.github/workflows/check-changes.yml
+    secrets: inherit
 
- would-release:
-   needs: check-changes
-   if: |
-     github.ref != 'refs/heads/main' && 
-     needs.check-changes.outputs.has_substantial_changes == 'true'
-   runs-on: ubuntu-latest
-   steps:
-     - run: |
-         echo "This branch has changes that would trigger a release on main:"
-         echo "${{ needs.check-changes.outputs.release_notes }}"
+  release:
+    name: 🚀 Release
+    needs: check_changes
+    if: |
+      github.ref == 'refs/heads/main' && 
+      needs.check-changes.outputs.has_substantial_changes == 'true'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release.yml
+    with:
+      release_notes: ${{ needs.check-changes.outputs.release_notes }}
+
+  would_release:
+    name: 📝 Would Release
+    needs: check_changes
+    if: |
+      github.ref != 'refs/heads/main' && 
+      needs.check-changes.outputs.has_substantial_changes == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "This branch has changes that would trigger a release on main:"
+          echo "${{ needs.check-changes.outputs.release_notes }}"

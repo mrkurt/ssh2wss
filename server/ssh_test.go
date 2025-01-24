@@ -2,10 +2,12 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -42,8 +44,11 @@ func TestInteractiveSSH(t *testing.T) {
 		t.Fatalf("Failed to create SSH server: %v", err)
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	go func() {
-		if err := server.Start(); err != nil {
+		if err := server.Start(ctx); err != nil && !errors.Is(err, context.Canceled) {
 			log.Printf("Server error: %v", err)
 		}
 	}()
@@ -165,8 +170,11 @@ func TestInteractiveSSHWithSubprocess(t *testing.T) {
 		t.Fatalf("Failed to create SSH server: %v", err)
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	go func() {
-		if err := server.Start(); err != nil {
+		if err := server.Start(ctx); err != nil && !errors.Is(err, context.Canceled) {
 			log.Printf("Server error: %v", err)
 		}
 	}()
@@ -293,9 +301,12 @@ func TestWindowResize(t *testing.T) {
 		t.Fatalf("Failed to create SSH server: %v", err)
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	// Start server in background
 	go func() {
-		if err := server.Start(); err != nil {
+		if err := server.Start(ctx); err != nil && !errors.Is(err, context.Canceled) {
 			t.Errorf("Server failed: %v", err)
 		}
 	}()
