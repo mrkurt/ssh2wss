@@ -180,6 +180,20 @@ async function main() {
 
   try {
     if (watch) {
+      // Show most recent failed run if it's less than 10 minutes old
+      const runs = await getRuns(false);
+      const recentFailedRun = runs.find(run => {
+        const runTime = new Date(run.createdAt);
+        const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
+        return runTime > tenMinutesAgo && run.conclusion === "failure";
+      });
+
+      if (recentFailedRun) {
+        console.log("Most recent failed run:");
+        await watchRun(recentFailedRun);
+        console.log("\nNow watching for new runs...");
+      }
+
       while (true) {
         const activeRuns = await waitForActiveRuns();
         if (activeRuns.length === 0) {
