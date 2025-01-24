@@ -1,29 +1,30 @@
 name: CI/CD Pipeline
 
 on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
-  workflow_dispatch:  # Allow manual trigger
+ push:
+ pull_request:
+ workflow_dispatch:
 
 permissions:
-  contents: write  # Needed for creating releases
+ contents: write
 
 jobs:
-  test:
-    uses: ./.github/workflows/test.yml
+ test:
+   uses: ./.github/workflows/test.yml
 
-  check-changes:
-    needs: test
-    uses: ./.github/workflows/check-changes.yml
-    secrets: inherit  # Inherit all available secrets, but don't require specific ones
+ check-changes:
+   needs: test
+   if: github.ref == 'refs/heads/main'
+   uses: ./.github/workflows/check-changes.yml
+   secrets: inherit
 
-  release:
-    needs: check-changes
-    if: needs.check-changes.outputs.has_substantial_changes == 'true'
-    permissions:
-      contents: write  # Explicitly pass write permission to release workflow
-    uses: ./.github/workflows/release.yml
-    with:
-      release_notes: ${{ needs.check-changes.outputs.release_notes }} 
+ release:
+   needs: check-changes
+   if: |
+     github.ref == 'refs/heads/main' && 
+     needs.check-changes.outputs.has_substantial_changes == 'true'
+   permissions:
+     contents: write
+   uses: ./.github/workflows/release.yml
+   with:
+     release_notes: ${{ needs.check-changes.outputs.release_notes }}
