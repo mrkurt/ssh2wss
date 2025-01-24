@@ -95,13 +95,6 @@ func (s *SSHServer) handleConnection(conn net.Conn) {
 	}
 }
 
-func getDefaultShell() string {
-	if shell := os.Getenv("SHELL"); shell != "" {
-		return shell
-	}
-	return "/bin/bash"
-}
-
 func (s *SSHServer) handleChannelRequests(channel ssh.Channel, requests <-chan *ssh.Request) {
 	var cmd *exec.Cmd
 	var ptyReq bool
@@ -144,6 +137,9 @@ func (s *SSHServer) handleChannelRequests(channel ssh.Channel, requests <-chan *
 				cmd = exec.Command(shell)
 				cmd.Env = append(os.Environ(), "TERM=xterm")
 
+				// Set up process attributes before starting PTY
+				setupProcessAttributes(cmd, true)
+
 				// Create PTY
 				ptmx, err := pty.Start(cmd)
 				if err != nil {
@@ -175,7 +171,7 @@ func (s *SSHServer) handleChannelRequests(channel ssh.Channel, requests <-chan *
 				}
 				return
 			} else {
-				cmd = exec.Command(shell, "-l")
+				cmd = exec.Command(shell, getShellArgs(true)...)
 			}
 			log.Printf("Starting shell (%s) with PTY: %v", shell, ptyReq)
 			s.handleShell(channel, cmd)
@@ -191,7 +187,8 @@ func (s *SSHServer) handleChannelRequests(channel ssh.Channel, requests <-chan *
 				continue
 			}
 			log.Printf("Executing command: %s", cmdStruct.Command)
-			cmd = exec.Command("/bin/bash", "-c", cmdStruct.Command)
+			args := getCommandArgs(cmdStruct.Command)
+			cmd = exec.Command(shell, args...)
 			if req.WantReply {
 				req.Reply(true, nil)
 			}
@@ -228,6 +225,9 @@ func (s *SSHServer) handleShell(channel ssh.Channel, cmd *exec.Cmd) {
 	var stdin io.WriteCloser
 	var stdout, stderr io.ReadCloser
 	var err error
+
+	// Set up platform-specific process attributes (non-PTY mode)
+	setupProcessAttributes(cmd, false)
 
 	// Only create pipes if they haven't been set
 	if cmd.Stdin == nil {

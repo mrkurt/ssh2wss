@@ -297,16 +297,12 @@ async function actionLogsMain() {
   try {
     if (watch) {
       // Show recent failed or in-progress runs from last hour
-      const runs = await getRuns(false);
-      const recentRuns = runs.filter(run => {
-        const runTime = new Date(run.createdAt);
-        const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
-        return runTime > oneHourAgo && (
-          run.conclusion === "failure" || 
-          run.status === "in_progress" ||
-          run.status === "queued"
-        );
-      });
+      const runs = await getRuns(true);
+      const recentRuns = runs.filter(run => 
+        run.conclusion === "failure" || 
+        run.status === "in_progress" ||
+        run.status === "queued"
+      );
 
       if (recentRuns.length > 0) {
         console.log("Recent runs:");
