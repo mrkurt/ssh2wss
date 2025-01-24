@@ -9,8 +9,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"syscall"
-
-	"golang.org/x/sys/windows"
 )
 
 type Shell struct {
@@ -54,8 +52,7 @@ func (s *Shell) Start(command string) error {
 
 	// Set up process attributes
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-		HideWindow:    true,
-		CreationFlags: windows.CREATE_NO_WINDOW,
+		HideWindow: true,
 	}
 
 	// Connect pipes
@@ -156,4 +153,12 @@ func findInPath(exe string) string {
 	}
 
 	return ""
+}
+
+// GetExitCode returns the process exit code
+func (s *Shell) GetExitCode() (uint32, error) {
+	if s.cmd == nil || s.cmd.ProcessState == nil {
+		return 0, fmt.Errorf("process not started or not finished")
+	}
+	return uint32(s.cmd.ProcessState.ExitCode()), nil
 }

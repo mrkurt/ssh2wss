@@ -302,8 +302,19 @@ func (s *SSHServer) handleShell(channel ssh.Channel, cmd *exec.Cmd) {
 			log.Printf("Non-exit error occurred, using exit code: %d", exitCode)
 		}
 	} else {
-		exitCode = uint32(cmd.ProcessState.ExitCode())
-		log.Printf("Command succeeded, got exit code: %d", exitCode)
+		// Try to get exit code from shell if available
+		if shell, ok := cmd.Stdin.(interface{ GetExitCode() (uint32, error) }); ok {
+			if code, err := shell.GetExitCode(); err == nil {
+				exitCode = code
+				log.Printf("Got exit code from shell: %d", exitCode)
+			} else {
+				exitCode = uint32(cmd.ProcessState.ExitCode())
+				log.Printf("Using ProcessState exit code: %d", exitCode)
+			}
+		} else {
+			exitCode = uint32(cmd.ProcessState.ExitCode())
+			log.Printf("Using ProcessState exit code: %d", exitCode)
+		}
 	}
 
 	// Send the exit status
