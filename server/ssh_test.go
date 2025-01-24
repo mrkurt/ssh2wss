@@ -22,6 +22,14 @@ import (
 )
 
 func TestInteractiveSSH(t *testing.T) {
+	// Find a random available port
+	listener, err := net.Listen("tcp", "localhost:0")
+	if err != nil {
+		t.Fatalf("Failed to find available port: %v", err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	listener.Close()
+
 	// Generate test key
 	key, err := generateTestKey()
 	if err != nil {
@@ -29,7 +37,7 @@ func TestInteractiveSSH(t *testing.T) {
 	}
 
 	// Create and start SSH server
-	server, err := NewSSHServer(2222, key)
+	server, err := NewSSHServer(port, key)
 	if err != nil {
 		t.Fatalf("Failed to create SSH server: %v", err)
 	}
@@ -56,7 +64,7 @@ func TestInteractiveSSH(t *testing.T) {
 	}
 
 	// Connect to SSH server
-	client, err := ssh.Dial("tcp", "localhost:2222", config)
+	client, err := ssh.Dial("tcp", fmt.Sprintf("localhost:%d", port), config)
 	if err != nil {
 		t.Fatalf("Failed to dial: %v", err)
 	}
@@ -137,6 +145,14 @@ func generateTestKey() ([]byte, error) {
 }
 
 func TestInteractiveSSHWithSubprocess(t *testing.T) {
+	// Find a random available port
+	listener, err := net.Listen("tcp", "localhost:0")
+	if err != nil {
+		t.Fatalf("Failed to find available port: %v", err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	listener.Close()
+
 	// Generate test key
 	key, err := generateTestKey()
 	if err != nil {
@@ -144,7 +160,7 @@ func TestInteractiveSSHWithSubprocess(t *testing.T) {
 	}
 
 	// Create and start SSH server
-	server, err := NewSSHServer(2222, key)
+	server, err := NewSSHServer(port, key)
 	if err != nil {
 		t.Fatalf("Failed to create SSH server: %v", err)
 	}
@@ -170,7 +186,7 @@ func TestInteractiveSSHWithSubprocess(t *testing.T) {
 	t.Run("Interactive Shell", func(t *testing.T) {
 		cmd := exec.Command("ssh",
 			"-tt", // Force TTY allocation
-			"-p", "2222",
+			"-p", fmt.Sprintf("%d", port),
 			"-o", "StrictHostKeyChecking=no",
 			"-o", "UserKnownHostsFile="+knownHostsFile,
 			"localhost")
@@ -225,7 +241,7 @@ func TestInteractiveSSHWithSubprocess(t *testing.T) {
 	// Test non-interactive command
 	t.Run("Non-Interactive Command", func(t *testing.T) {
 		cmd := exec.Command("ssh",
-			"-p", "2222",
+			"-p", fmt.Sprintf("%d", port),
 			"-o", "StrictHostKeyChecking=no",
 			"-o", "UserKnownHostsFile="+knownHostsFile,
 			"-o", "LogLevel=DEBUG",
@@ -303,8 +319,7 @@ func TestWindowResize(t *testing.T) {
 		"-o", "UserKnownHostsFile="+knownHostsFile,
 		"-o", "LogLevel=QUIET", // Suppress warnings and connection messages
 		"localhost",
-		// Use tput which is more reliable than stty for getting terminal size
-		"tput lines && tput cols")
+		"tput -T xterm-256color lines && tput -T xterm-256color cols") // Use -T flag instead of TERM env var
 
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout

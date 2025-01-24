@@ -21,5 +21,6 @@ go.work
 *.key
 *.key.pub
 
+# Development logs and notes - these are local-only files not meant to be shared
 dev.log
 DEVELOPMENT.md 

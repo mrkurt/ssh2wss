@@ -1,0 +1,93 @@
+#!/usr/bin/env -S deno run --allow-run
+
+async function getLatestRunId(): Promise<string> {
+  const process = new Deno.Command("gh", {
+    args: ["run", "list", "-L", "1", "--json", "databaseId,status,createdAt", "-q", ".[0]"],
+  });
+  const { stdout } = await process.output();
+  return new TextDecoder().decode(stdout).trim();
+}
+
+async function getRunLogs(runId: string): Promise<void> {
+  const process = new Deno.Command("gh", {
+    args: ["run", "view", runId, "--log"],
+    stdout: "piped",
+    stderr: "piped",
+  });
+  const { stdout, stderr } = await process.output();
+  const output = new TextDecoder().decode(stdout);
+  const errors = new TextDecoder().decode(stderr);
+  
+  // Look for test failures
+  const lines = [...output.split("\n"), ...errors.split("\n")];
+  for (const line of lines) {
+    if (line.includes("FAIL") || line.includes("Error:") || line.includes("tput: No value for $TERM")) {
+      console.log(line);
+    }
+  }
+}
+
+async function watchRun(runId: string): Promise<void> {
+  let lastStatus = "";
+  
+  while (true) {
+    const process = new Deno.Command("gh", {
+      args: ["run", "view", runId, "--json", "status,conclusion", "-q", "."],
+    });
+    const { stdout } = await process.output();
+    const result = JSON.parse(new TextDecoder().decode(stdout));
+    
+    if (result.status !== lastStatus) {
+      console.log(`Status: ${result.status}`);
+      lastStatus = result.status;
+      
+      if (result.status === "completed") {
+        console.log(`Conclusion: ${result.conclusion}`);
+        if (result.conclusion !== "success") {
+          await getRunLogs(runId);
+        }
+        break;
+      }
+    }
+    
+    // Wait 2 seconds before checking again
+    await new Promise(resolve => setTimeout(resolve, 2000));
+  }
+}
+
+async function waitForNewRun(lastRunInfo: any): Promise<string> {
+  console.log("Waiting for new run to start...");
+  while (true) {
+    const newRunInfo = JSON.parse(await getLatestRunId());
+    if (newRunInfo.createdAt > lastRunInfo.createdAt) {
+      return newRunInfo.databaseId;
+    }
+    await new Promise(resolve => setTimeout(resolve, 2000));
+  }
+}
+
+async function main() {
+  try {
+    const args = Deno.args;
+    const shouldWatch = args.includes("--watch");
+    
+    const runInfo = JSON.parse(await getLatestRunId());
+    console.log(`Latest run ID: ${runInfo.databaseId}`);
+    
+    if (shouldWatch) {
+      const runId = await waitForNewRun(runInfo);
+      console.log(`New run started with ID: ${runId}`);
+      console.log("Watching run progress...");
+      await watchRun(runId);
+    } else {
+      await getRunLogs(runInfo.databaseId);
+    }
+  } catch (error) {
+    console.error("Error:", error.message);
+    Deno.exit(1);
+  }
+}
+
+if (import.meta.main) {
+  main();
+} 
