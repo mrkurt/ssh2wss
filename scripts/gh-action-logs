@@ -31,33 +31,9 @@ async function getActiveRuns(): Promise<RunInfo[]> {
       "-L", "10", 
       "--json", "databaseId,status,conclusion,displayTitle,createdAt,headBranch",
     ],
-    stderr: "piped",
   });
-  const { stdout, stderr } = await process.output();
-  const stderrText = new TextDecoder().decode(stderr);
-  if (stderrText) {
-    console.error("Error fetching runs:", stderrText);
-    // @ts-ignore: Deno namespace
-    Deno.exit(1);
-    return []; // Unreachable but satisfies TypeScript
-  }
-  
-  const stdoutText = new TextDecoder().decode(stdout).trim();
-  if (!stdoutText) {
-    console.log("No active runs found (empty response)");
-    return [];
-  }
-  
-  try {
-    return JSON.parse(stdoutText);
-  } catch (error) {
-    console.error("Failed to parse GitHub response:");
-    console.error("Raw output:", stdoutText);
-    console.error("Parse error:", error.message);
-    // @ts-ignore: Deno namespace
-    Deno.exit(1);
-    return []; // Unreachable but satisfies TypeScript
-  }
+  const { stdout } = await process.output();
+  return JSON.parse(new TextDecoder().decode(stdout).trim());
 }
 
 async function getRunLogs(runId: string): Promise<void> {
@@ -70,15 +46,6 @@ async function getRunLogs(runId: string): Promise<void> {
   const { stdout, stderr } = await process.output();
   const output = new TextDecoder().decode(stdout);
   const errors = new TextDecoder().decode(stderr);
-  
-  if (errors) {
-    console.error("Error fetching logs:", errors);
-  }
-  
-  if (!output && !errors) {
-    console.log("No logs available yet");
-    return;
-  }
   
   // Look for test failures
   const lines = [...output.split("\n"), ...errors.split("\n")];
@@ -94,44 +61,26 @@ async function watchRun(run: RunInfo): Promise<void> {
   console.log(`${STATUS_EMOJI[run.status as keyof typeof STATUS_EMOJI]} [${run.headBranch}] ${run.displayTitle}`);
   
   while (true) {
-    try {
-      // @ts-ignore: Deno namespace
-      const process = new Deno.Command("gh", {
-        args: ["run", "view", run.databaseId, "--json", "status,conclusion", "-q", "."],
-        stderr: "piped",
-      });
-      const { stdout, stderr } = await process.output();
-      const stderrText = new TextDecoder().decode(stderr);
-      if (stderrText) {
-        console.error("Error checking run status:", stderrText);
-        break;
-      }
+    // @ts-ignore: Deno namespace
+    const process = new Deno.Command("gh", {
+      args: ["run", "view", run.databaseId, "--json", "status,conclusion", "-q", "."],
+    });
+    const { stdout } = await process.output();
+    const result = JSON.parse(new TextDecoder().decode(stdout));
+    
+    if (result.status !== lastStatus) {
+      const emoji = STATUS_EMOJI[result.status as keyof typeof STATUS_EMOJI] || "❓";
+      console.log(`${emoji} [${run.headBranch}] ${result.status}`);
+      lastStatus = result.status;
       
-      const stdoutText = new TextDecoder().decode(stdout).trim();
-      if (!stdoutText) {
-        console.error("Empty response when checking run status");
-        break;
-      }
-      
-      const result = JSON.parse(stdoutText);
-      
-      if (result.status !== lastStatus) {
-        const emoji = STATUS_EMOJI[result.status as keyof typeof STATUS_EMOJI] || "❓";
-        console.log(`${emoji} [${run.headBranch}] ${result.status}`);
-        lastStatus = result.status;
-        
-        if (result.status === "completed") {
-          const conclusionEmoji = STATUS_EMOJI[result.conclusion as keyof typeof STATUS_EMOJI] || "❓";
-          console.log(`${conclusionEmoji} [${run.headBranch}] Conclusion: ${result.conclusion}`);
-          if (result.conclusion !== "success") {
-            await getRunLogs(run.databaseId);
-          }
-          break;
+      if (result.status === "completed") {
+        const conclusionEmoji = STATUS_EMOJI[result.conclusion as keyof typeof STATUS_EMOJI] || "❓";
+        console.log(`${conclusionEmoji} [${run.headBranch}] Conclusion: ${result.conclusion}`);
+        if (result.conclusion !== "success") {
+          await getRunLogs(run.databaseId);
         }
+        break;
       }
-    } catch (error) {
-      console.error("Error watching run:", error.message);
-      break;
     }
     
     await new Promise(resolve => setTimeout(resolve, 2000));
@@ -140,19 +89,13 @@ async function watchRun(run: RunInfo): Promise<void> {
 
 async function waitForActiveRuns(): Promise<RunInfo[]> {
   while (true) {
-    try {
-      const runs = await getActiveRuns();
-      const activeRuns = runs.filter(run => run.status !== "completed");
-      if (activeRuns.length > 0) {
-        return activeRuns;
-      }
-      console.log("⏳ Waiting for active runs...");
-      await new Promise(resolve => setTimeout(resolve, 2000));
-    } catch (error) {
-      console.error("Error waiting for runs:", error.message);
-      // Wait a bit longer if there's an error
-      await new Promise(resolve => setTimeout(resolve, 5000));
+    const runs = await getActiveRuns();
+    const activeRuns = runs.filter(run => run.status !== "completed");
+    if (activeRuns.length > 0) {
+      return activeRuns;
     }
+    console.log("⏳ Waiting for active runs...");
+    await new Promise(resolve => setTimeout(resolve, 2000));
   }
 }
 
@@ -164,7 +107,7 @@ async function main() {
     // Watch all active runs concurrently
     await Promise.all(activeRuns.map(run => watchRun(run)));
   } catch (error) {
-    console.error("Fatal error:", error.message);
+    console.error("Error:", error.message);
     // @ts-ignore: Deno namespace
     Deno.exit(1);
   }
