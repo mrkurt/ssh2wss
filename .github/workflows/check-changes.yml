@@ -39,7 +39,7 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           set -x  # Enable command echo
-          ./scripts/check-changes ${{ github.event.before }} || {
+          ./scripts/check-changes || {
             echo "::error::check-changes failed with exit code $?"
             echo "Full output above"
             exit 1

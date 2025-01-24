@@ -381,6 +381,9 @@ async function checkChangesMain() {
       console.log("\n🤖 Generating release notes with Claude API...");
       const notes = await generateReleaseNotes(commits);
       await Deno.writeTextFile("release_notes.txt", notes);
+    } else {
+      console.error("\n❌ Error: ANTHROPIC_API_KEY not set but release notes are needed");
+      Deno.exit(1);
     }
   }
 }
