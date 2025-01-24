@@ -8,6 +8,9 @@ jobs:
     name: ":windows: Test"
     runs-on: windows-latest
     timeout-minutes: 5
+    defaults:
+      run:
+        shell: cmd
     steps:
       - uses: actions/checkout@v4
         with:
