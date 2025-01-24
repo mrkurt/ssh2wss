@@ -166,12 +166,12 @@ func TestBridge(t *testing.T) {
 
 	// Test SSH functionality
 	t.Run("Command Execution", func(t *testing.T) {
-		// Check SSH availability first
-		sshVersionCmd := exec.Command("ssh", "-V")
-		versionOutput, versionErr := sshVersionCmd.CombinedOutput()
-		t.Logf("SSH version check - output: %s, error: %v", string(versionOutput), versionErr)
-
 		if runtime.GOOS == "windows" {
+			// Print SSH help output on Windows
+			helpCmd := exec.Command("ssh", "-h")
+			helpOutput, helpErr := helpCmd.CombinedOutput()
+			t.Logf("SSH help output:\n%s\nError: %v", string(helpOutput), helpErr)
+
 			// Check if SSH is in PATH
 			sshPath, err := exec.LookPath("ssh")
 			t.Logf("SSH binary location: %v (err: %v)", sshPath, err)
