@@ -40,12 +40,6 @@ func checkGoroutineLeak(t *testing.T) func() {
 	}
 }
 
-// Default ports used by the actual tool
-const (
-	DefaultSSHPort = 2222
-	DefaultWSPort  = 8081
-)
-
 // getFreePorts returns available ports for SSH and WebSocket servers
 func getFreePorts(t *testing.T) (sshPort, wsPort int) {
 	sshListener, err := net.Listen("tcp", "localhost:0")
@@ -89,22 +83,9 @@ func TestBridge(t *testing.T) {
 
 	// Set up test environment
 	knownHostsFile := filepath.Join(tmpDir, "known_hosts")
-	testKeyFile := filepath.Join(tmpDir, "test_host.key")
-
-	// Generate test SSH key
-	cmd := exec.Command("ssh-keygen", "-t", "rsa", "-f", testKeyFile, "-N", "")
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("Failed to generate test SSH key: %v", err)
-	}
-
-	// Read the host key
-	hostKey, err := os.ReadFile(testKeyFile)
-	if err != nil {
-		t.Fatalf("Failed to read host key: %v", err)
-	}
 
 	// Start the bridge with dynamic ports
-	bridge, err := server.NewBridge(testSSHPort, testWSPort, hostKey)
+	bridge, err := server.NewBridge(testSSHPort, testWSPort)
 	if err != nil {
 		t.Fatalf("Failed to create bridge: %v", err)
 	}

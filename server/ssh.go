@@ -23,16 +23,11 @@ type SSHServer struct {
 }
 
 // NewSSHServer creates a new SSH server with the given host key
-func NewSSHServer(port int, hostKey []byte) (*SSHServer, error) {
-	signer, err := ssh.ParsePrivateKey(hostKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse host key: %v", err)
-	}
-
+func NewSSHServer(port int, hostKey ssh.Signer) (*SSHServer, error) {
 	config := &ssh.ServerConfig{
 		NoClientAuth: true,
 	}
-	config.AddHostKey(signer)
+	config.AddHostKey(hostKey)
 
 	return &SSHServer{
 		port:      port,

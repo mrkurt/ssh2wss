@@ -2,10 +2,29 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
 	"errors"
 	"fmt"
 	"log"
+
+	"golang.org/x/crypto/ssh"
 )
+
+// generateHostKey generates an in-memory RSA key for the SSH server
+func generateHostKey() (ssh.Signer, error) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate RSA key: %v", err)
+	}
+
+	signer, err := ssh.NewSignerFromKey(key)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create signer: %v", err)
+	}
+
+	return signer, nil
+}
 
 // Bridge ties together the SSH and WebSocket servers
 type Bridge struct {
@@ -17,8 +36,13 @@ type Bridge struct {
 	wsDone    chan struct{} // signals WebSocket server shutdown complete
 }
 
-// NewBridge creates a new bridge with the given ports and host key
-func NewBridge(sshPort, wsPort int, hostKey []byte) (*Bridge, error) {
+// NewBridge creates a new bridge with the given ports
+func NewBridge(sshPort, wsPort int) (*Bridge, error) {
+	hostKey, err := generateHostKey()
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate host key: %v", err)
+	}
+
 	sshServer, err := NewSSHServer(sshPort, hostKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create SSH server: %v", err)

@@ -11,14 +11,8 @@ func TestBridge(t *testing.T) {
 	defer trackOperation("TestBridge")()
 	defer checkGoroutineLeak(t)()
 
-	// Generate test host key
-	hostKey, err := generateTestKey()
-	if err != nil {
-		t.Fatalf("Failed to generate host key: %v", err)
-	}
-
 	// Create bridge
-	bridge, err := NewBridge(2222, 8080, hostKey)
+	bridge, err := NewBridge(2222, 8080)
 	if err != nil {
 		t.Fatalf("Failed to create bridge: %v", err)
 	}

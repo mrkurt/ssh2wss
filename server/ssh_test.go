@@ -5,8 +5,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
-	"crypto/x509"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -139,19 +137,19 @@ func TestSSHServerInteractive(t *testing.T) {
 	}
 }
 
-func generateTestKey() ([]byte, error) {
-	private, err := rsa.GenerateKey(rand.Reader, 2048)
+// generateTestKey generates a test RSA key
+func generateTestKey() (ssh.Signer, error) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate key: %v", err)
+		return nil, fmt.Errorf("failed to generate RSA key: %v", err)
 	}
 
-	privateBytes := pem.EncodeToMemory(&pem.Block{
-		Type:    "RSA PRIVATE KEY",
-		Headers: nil,
-		Bytes:   x509.MarshalPKCS1PrivateKey(private),
-	})
+	signer, err := ssh.NewSignerFromKey(key)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create signer: %v", err)
+	}
 
-	return privateBytes, nil
+	return signer, nil
 }
 
 func TestSSHServerInteractiveWithSubprocess(t *testing.T) {
