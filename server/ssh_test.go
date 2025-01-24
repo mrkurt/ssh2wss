@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -24,6 +25,10 @@ import (
 )
 
 func TestInteractiveSSH(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Interactive SSH tests not supported on Windows (no PTY support)")
+	}
+
 	// Find a random available port
 	listener, err := net.Listen("tcp", "localhost:0")
 	if err != nil {
@@ -150,6 +155,10 @@ func generateTestKey() ([]byte, error) {
 }
 
 func TestInteractiveSSHWithSubprocess(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Interactive SSH tests not supported on Windows (no PTY support)")
+	}
+
 	// Find a random available port
 	listener, err := net.Listen("tcp", "localhost:0")
 	if err != nil {

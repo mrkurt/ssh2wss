@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 )
 
@@ -47,7 +48,14 @@ func (s *Shell) Start(command string) error {
 	s.stdout = or
 
 	// Create the command
-	cmd := exec.Command(command)
+	var cmd *exec.Cmd
+	if isInternalCommand(command) {
+		// For internal commands like dir, echo, etc., use cmd.exe /c
+		cmd = exec.Command("cmd.exe", "/c", command)
+	} else {
+		// For external commands, execute directly
+		cmd = exec.Command(command)
+	}
 	s.cmd = cmd
 
 	// Set up process attributes
@@ -170,14 +178,31 @@ func findInPath(exe string) string {
 
 // GetExitCode returns the process exit code
 func (s *Shell) GetExitCode() int {
-	if s.cmd == nil {
+	if s.cmd == nil || s.cmd.ProcessState == nil {
 		return -1
 	}
-	if s.cmd.ProcessState == nil {
-		return -1
+
+	// On Windows, ProcessState.ExitCode() is the most reliable way to get the exit code
+	return s.cmd.ProcessState.ExitCode()
+}
+
+// isInternalCommand checks if a command is a Windows internal command
+func isInternalCommand(command string) bool {
+	// List of Windows internal commands
+	internalCmds := []string{
+		"dir", "echo", "cd", "type", "copy", "del", "erase", "md", "mkdir",
+		"move", "path", "rd", "rmdir", "ren", "rename", "set", "time", "date",
+		"ver", "vol", "prompt", "cls", "color",
 	}
-	if status, ok := s.cmd.ProcessState.Sys().(syscall.WaitStatus); ok {
-		return status.ExitStatus()
+
+	// Extract the command name (before any arguments)
+	cmdName := strings.Fields(command)[0]
+	cmdName = strings.ToLower(cmdName)
+
+	for _, cmd := range internalCmds {
+		if cmdName == cmd {
+			return true
+		}
 	}
-	return -1
+	return false
 }

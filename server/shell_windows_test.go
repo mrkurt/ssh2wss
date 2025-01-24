@@ -171,3 +171,89 @@ func TestWindowsShell(t *testing.T) {
 		}
 	})
 }
+
+func TestWindowsExitCodes(t *testing.T) {
+	tests := []struct {
+		name     string
+		command  string
+		wantCode int
+	}{
+		// Internal commands
+		{"dir success", "dir", 0},
+		{"dir failure", "dir /nonexistentflag", 1},
+		{"echo success", "echo test", 0},
+		{"cd success", "cd .", 0},
+		{"cd failure", "cd /nonexistent", 1},
+
+		// External commands
+		{"whoami success", "whoami", 0},
+		{"nonexistent command", "nonexistentcommand", 1},
+		{"ping success", "ping -n 1 127.0.0.1", 0},
+		{"ping failure", "ping -n 1 invalid.local", 1},
+
+		// Complex commands
+		{"multiple commands success", "echo test && dir", 0},
+		{"multiple commands failure", "echo test && nonexistentcommand", 1},
+		{"pipe success", "dir | find \"Windows\"", 0},
+		{"pipe failure", "dir | find \"nonexistentstring\"", 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			shell, err := NewShell(80, 24)
+			if err != nil {
+				t.Fatalf("Failed to create shell: %v", err)
+			}
+			defer shell.Close()
+
+			err = shell.Start(tt.command)
+			if err != nil {
+				t.Fatalf("Failed to start command: %v", err)
+			}
+
+			// Read all output to ensure command completes
+			buf := make([]byte, 1024)
+			for {
+				_, err := shell.Read(buf)
+				if err != nil {
+					break // EOF is expected
+				}
+			}
+
+			// Close shell and check exit code
+			shell.Close()
+			gotCode := shell.GetExitCode()
+
+			if gotCode != tt.wantCode {
+				t.Errorf("Command %q: got exit code %d, want %d", tt.command, gotCode, tt.wantCode)
+			}
+		})
+	}
+}
+
+func TestWindowsInternalCommandDetection(t *testing.T) {
+	tests := []struct {
+		command string
+		want    bool
+	}{
+		{"dir", true},
+		{"DIR", true}, // Test case insensitivity
+		{"dir /w", true},
+		{"echo test", true},
+		{"cd ..", true},
+		{"whoami", false},
+		{"ping", false},
+		{"notepad", false},
+		{"dir | sort", true}, // Should detect dir as internal
+		{"echo test && cd ..", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.command, func(t *testing.T) {
+			got := isInternalCommand(tt.command)
+			if got != tt.want {
+				t.Errorf("isInternalCommand(%q) = %v, want %v", tt.command, got, tt.want)
+			}
+		})
+	}
+}

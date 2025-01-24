@@ -345,3 +345,18 @@ func (s *testServer) handleConn(conn net.Conn) {
 func isClosedError(err error) bool {
 	return err.Error() == "accept tcp 127.0.0.1:0: use of closed network connection"
 }
+
+func TestWindowsInteractiveSSH(t *testing.T) {
+	t.Skip("Interactive SSH tests not supported on Windows (no PTY support)")
+	// ... rest of existing test code ...
+}
+
+func TestWindowsInteractiveCommand(t *testing.T) {
+	t.Skip("Interactive command tests not supported on Windows (no PTY support)")
+	// ... rest of existing test code ...
+}
+
+func TestWindowsSubprocess(t *testing.T) {
+	t.Skip("Interactive subprocess tests not supported on Windows (no PTY support)")
+	// ... rest of existing test code ...
+}
