@@ -1,45 +1,5 @@
 #!/usr/bin/env -S deno run --allow-run --allow-write --allow-env --allow-net
 
-// Declare the Deno namespace for TypeScript
-declare namespace Deno {
-  export class Command {
-    constructor(command: string, options?: {
-      args?: string[];
-      stdout?: "piped" | "inherit" | "null";
-      stderr?: "piped" | "inherit" | "null";
-    });
-    output(): Promise<{
-      stdout: Uint8Array;
-      stderr: Uint8Array;
-    }>;
-  }
-  export function writeTextFile(path: string, data: string): Promise<void>;
-  export const args: string[];
-  export function exit(code: number): never;
-}
-
-// Declare module augmentation for ImportMeta
-declare global {
-  interface ImportMeta {
-    main: boolean;
-  }
-}
-
-// @ts-ignore: Cannot find module - Deno will resolve at runtime
-import { encode } from "https://deno.land/std@0.217.0/encoding/base64.ts";
-
-// Add Deno types
-declare global {
-  interface Window {
-    Deno: {
-      Command: typeof Deno.Command;
-      env: {
-        get(key: string): string | undefined;
-      };
-    };
-  }
-}
-
 interface FileChange {
   path: string;
   additions: number;
@@ -65,7 +25,6 @@ interface GitCommit {
 // Threshold for substantial changes (we can adjust this)
 const CHANGE_THRESHOLD = 20; // Total lines changed (added + removed) per file
 
-// Parse command line arguments
 const startCommit = Deno.args[0]; // Optional starting commit
 
 // Helper function to run commands and handle errors
@@ -186,7 +145,6 @@ function formatDate(isoDate: string): string {
   }
 }
 
-// @ts-ignore: Deno namespace
 async function isFirstRelease(): Promise<boolean> {
   const process = new Deno.Command("git", {
     args: ["tag", "-l"],
@@ -196,14 +154,24 @@ async function isFirstRelease(): Promise<boolean> {
   return !tags;
 }
 
-// @ts-ignore: Deno namespace
 async function getCompareLink(): Promise<string> {
-  // Get the repository URL
-  const process = new Deno.Command("gh", {
-    args: ["repo", "view", "--json", "url"],
-  });
-  const { stdout } = await process.output();
-  const { url } = JSON.parse(new TextDecoder().decode(stdout));
+  // Use GitHub Actions env vars if available, fallback to git remote
+  const serverUrl = Deno.env.get("GITHUB_SERVER_URL");
+  const repository = Deno.env.get("GITHUB_REPOSITORY");
+  
+  let url: string;
+  if (serverUrl && repository) {
+    url = `${serverUrl}/${repository}`;
+  } else {
+    // Fallback to git remote parsing
+    const process = new Deno.Command("git", {
+      args: ["remote", "get-url", "origin"],
+    });
+    const { stdout } = await process.output();
+    url = new TextDecoder().decode(stdout).trim()
+      .replace(/\.git$/, '')  // Remove .git suffix if present
+      .replace(/^git@github\.com:/, 'https://github.com/');  // Convert SSH to HTTPS URL
+  }
 
   // For first release, compare against first commit
   if (await isFirstRelease()) {
@@ -280,7 +248,6 @@ async function generateReleaseNotes(commits: CommitInfo[]): Promise<string> {
   return notes;
 }
 
-// @ts-ignore: Deno namespace
 async function getLastReleaseTag(): Promise<string> {
   const process = new Deno.Command("git", {
     args: ["rev-list", "--max-parents=0", "HEAD"],
@@ -305,7 +272,7 @@ function getCommitEmoji(subject: string): string {
   return "🔨";
 }
 
-async function main() {
+async function checkChangesMain() {
   const startCommit = Deno.args[0];
   const commits = await getCommitHistory(startCommit);
   
@@ -390,7 +357,6 @@ async function main() {
   }
 
   // Generate release notes if API key exists
-  // @ts-ignore: Deno.env exists at runtime
   if (Deno.env.get("ANTHROPIC_API_KEY")) {
     console.log("\n🤖 Generating release notes with Claude API...");
     await generateReleaseNotes(commits);
@@ -398,5 +364,5 @@ async function main() {
 }
 
 if (import.meta.main) {
-  main();
+  checkChangesMain();
 } 
