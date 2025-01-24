@@ -39,13 +39,13 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           set -x  # Enable command echo
-          ./scripts/check-changes || {
-            echo "::error::check-changes failed with exit code $?"
-            echo "Full output above"
-            exit 1
-          }
-          {
-            echo "release_notes<<EOF"
-            cat release_notes.txt
-            echo "EOF"
-          } >> $GITHUB_OUTPUT 
+          if ./scripts/check-changes; then
+            echo "has_substantial_changes=true" >> $GITHUB_OUTPUT
+            {
+              echo "release_notes<<EOF"
+              cat release_notes.txt
+              echo "EOF"
+            } >> $GITHUB_OUTPUT
+          else
+            echo "has_substantial_changes=false" >> $GITHUB_OUTPUT
+          fi 
