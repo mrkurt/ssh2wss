@@ -71,8 +71,6 @@ func (s *SSHServer) handleConnection(conn net.Conn) {
 	}
 	defer sshConn.Close()
 
-	log.Printf("New SSH connection from %s", sshConn.RemoteAddr())
-
 	// Handle incoming requests
 	go ssh.DiscardRequests(reqs)
 
@@ -125,7 +123,6 @@ func (s *SSHServer) handleChannelRequests(channel ssh.Channel, requests <-chan *
 				ok = false
 			} else {
 				ok = true
-				log.Printf("PTY requested: term=%s, cols=%d, rows=%d", ptyPayload.Term, ptyPayload.Columns, ptyPayload.Rows)
 			}
 
 		case "shell":
@@ -158,21 +155,18 @@ func (s *SSHServer) handleChannelRequests(channel ssh.Channel, requests <-chan *
 				// Wait for command to finish
 				err = cmd.Wait()
 				if err != nil {
-					log.Printf("Command failed: %v", err)
 					if exitErr, ok := err.(*exec.ExitError); ok {
 						if status, ok := exitErr.Sys().(syscall.WaitStatus); ok {
 							channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{uint32(status.ExitStatus())}))
 						}
 					}
 				} else {
-					log.Printf("Command completed successfully")
 					channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{0}))
 				}
 				return
 			} else {
 				cmd = exec.Command(shell, getShellArgs(true)...)
 			}
-			log.Printf("Starting shell (%s) with PTY: %v", shell, ptyReq)
 			s.handleShell(channel, cmd)
 			return
 
@@ -185,7 +179,6 @@ func (s *SSHServer) handleChannelRequests(channel ssh.Channel, requests <-chan *
 				}
 				continue
 			}
-			log.Printf("Executing command: %s", cmdStruct.Command)
 			args := getCommandArgs(cmdStruct.Command)
 			cmd = exec.Command(shell, args...)
 			if req.WantReply {
@@ -203,7 +196,6 @@ func (s *SSHServer) handleChannelRequests(channel ssh.Channel, requests <-chan *
 					Y      uint32
 				}{}
 				if err := ssh.Unmarshal(req.Payload, &winChReq); err == nil {
-					log.Printf("Window size changed: %dx%d", winChReq.Width, winChReq.Height)
 					if err := setWinsize(os.Stdout, int(winChReq.Width), int(winChReq.Height)); err != nil {
 						log.Printf("Failed to set window size: %v", err)
 					}
@@ -219,8 +211,6 @@ func (s *SSHServer) handleChannelRequests(channel ssh.Channel, requests <-chan *
 }
 
 func (s *SSHServer) handleShell(channel ssh.Channel, cmd *exec.Cmd) {
-	log.Printf("Starting shell handler")
-
 	var stdin io.WriteCloser
 	var stdout, stderr io.ReadCloser
 	var err error
@@ -263,7 +253,7 @@ func (s *SSHServer) handleShell(channel ssh.Channel, cmd *exec.Cmd) {
 
 	// Copy data between pipes and SSH channel
 	var wg sync.WaitGroup
-	wg.Add(3) // Changed from 2 to 3 to include stderr
+	wg.Add(3)
 
 	go func() {
 		defer wg.Done()
@@ -283,42 +273,33 @@ func (s *SSHServer) handleShell(channel ssh.Channel, cmd *exec.Cmd) {
 
 	// Wait for command to finish
 	err = cmd.Wait()
-	log.Printf("Command finished, checking exit status")
 
 	var exitCode uint32
 	if err != nil {
-		log.Printf("Command returned error: %v", err)
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			code, ok := getExitStatus(exitErr)
 			if ok {
 				exitCode = code
-				log.Printf("Got exit code from error: %d", exitCode)
 			} else {
 				exitCode = 1
-				log.Printf("Could not get exit code from error, using: %d", exitCode)
 			}
 		} else {
 			exitCode = 1
-			log.Printf("Non-exit error occurred, using exit code: %d", exitCode)
 		}
 	} else {
 		// Try to get exit code from shell if available
 		if shell, ok := cmd.Stdin.(interface{ GetExitCode() (uint32, error) }); ok {
 			if code, err := shell.GetExitCode(); err == nil {
 				exitCode = code
-				log.Printf("Got exit code from shell: %d", exitCode)
 			} else {
 				exitCode = uint32(cmd.ProcessState.ExitCode())
-				log.Printf("Using ProcessState exit code: %d", exitCode)
 			}
 		} else {
 			exitCode = uint32(cmd.ProcessState.ExitCode())
-			log.Printf("Using ProcessState exit code: %d", exitCode)
 		}
 	}
 
 	// Send the exit status
-	log.Printf("Sending exit status: %d", exitCode)
 	channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{exitCode}))
 
 	// Wait for all goroutines to finish
@@ -326,5 +307,4 @@ func (s *SSHServer) handleShell(channel ssh.Channel, cmd *exec.Cmd) {
 
 	// Close the channel to ensure clean shutdown
 	channel.Close()
-	log.Printf("Shell handler completed")
 }
