@@ -25,7 +25,7 @@ jobs:
           fetch-depth: 0
       - uses: denoland/setup-deno@v1
         with:
-          deno-version: v1.x
+          deno-version: 2.x
       - name: Debug Secrets
         run: |
           if [ -n "${{ secrets.ANTHROPIC_API_KEY }}" ]; then
@@ -38,7 +38,12 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
-          ./scripts/check-changes ${{ github.event.before }}
+          set -x  # Enable command echo
+          ./scripts/check-changes ${{ github.event.before }} || {
+            echo "::error::check-changes failed with exit code $?"
+            echo "Full output above"
+            exit 1
+          }
           {
             echo "release_notes<<EOF"
             cat release_notes.txt
