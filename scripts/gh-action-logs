@@ -175,34 +175,37 @@ async function getJobLogs(jobId: number): Promise<string> {
     return output;
   }
 
-  // Debug: show first few lines after timestamp removal
-  console.log("\nFirst 10 cleaned lines:");
-  output.split(/\r?\n/).slice(0, 10).forEach((line, i) => {
-    const clean = stripTimestamps(line).replace(/\r$/, "");
-    console.log(`Line ${i}:`, JSON.stringify(clean));
-  });
-  
   const chunks = extractErrorChunks(output);
-  console.log("\nFound chunks:", chunks.length);
-  if (chunks.length > 0) {
-    console.log("First chunk preview:", JSON.stringify(chunks[0].slice(0, 200)));
-  }
-  
-  return chunks.join("\n\n") || "No error logs found";
+  return chunks.length > 0 ? chunks.join("\n\n") : "...";
 }
 
 async function watchRun(run: Run): Promise<boolean> {
   const showAnnotations = Deno.args.includes("--show-annotations");
   
-  // Clear screen and move cursor to top
-  console.log("\x1b[2J\x1b[H");
+  // Save cursor position for next update
+  let numLines = 0;
+  
+  // Helper to count lines in a string
+  function countLines(str: string): number {
+    return str.split("\n").length;
+  }
+  
+  // Move cursor up and clear lines
+  function clearPreviousOutput() {
+    if (numLines > 0) {
+      // Move up N lines and clear to bottom of screen
+      console.log(`\x1b[${numLines}A\x1b[J`);
+    }
+  }
   
   // Use conclusion emoji for completed runs
   const emoji = run.status === "completed" && run.conclusion 
     ? STATUS_EMOJI[run.conclusion as keyof typeof STATUS_EMOJI] 
     : STATUS_EMOJI[run.status as keyof typeof STATUS_EMOJI];
   
-  console.log(`${emoji} [${run.headBranch}] ${run.name} (#${run.databaseId})`);
+  clearPreviousOutput();
+  let output = `${emoji} [${run.headBranch}] ${run.name} (#${run.databaseId})\n`;
+  numLines = 1;
   
   const jobs = await getJobsForRun(run.databaseId);
   for (const job of jobs) {
@@ -211,38 +214,50 @@ async function watchRun(run: Run): Promise<boolean> {
       ? STATUS_EMOJI[job.conclusion as keyof typeof STATUS_EMOJI]
       : STATUS_EMOJI[job.status as keyof typeof STATUS_EMOJI];
       
-    console.log(`  ${jobEmoji} ${job.name} (Job #${job.id})`);
+    output += `  ${jobEmoji} ${job.name} (Job #${job.id})\n`;
+    numLines++;
+    
     if (job.status === "completed") {
       if (showAnnotations) {
         const annotations = await getAnnotationsForJob(job.id);
         if (annotations.length > 0) {
-          console.log("    Annotations:");
+          output += "    Annotations:\n";
+          numLines++;
           for (const annotation of annotations) {
-            console.log(`      - ${annotation}`);
+            output += `      - ${annotation}\n`;
+            numLines++;
           }
         }
       }
       
       // Show full logs for failed jobs
       if (job.conclusion === "failure") {
-        console.log("\n    Full job logs:");
+        output += "\n    Full job logs:\n";
+        numLines += 2;
         const logs = await getJobLogs(job.id);
-        console.log(logs.split("\n").map(line => `      ${line}`).join("\n"));
+        const logLines = logs.split("\n").map(line => `      ${line}`).join("\n");
+        output += logLines + "\n";
+        numLines += countLines(logLines) + 1;
       }
     } else if (job.status === "in_progress") {
       // Show current logs for in-progress jobs
-      console.log("\n    Current job logs:");
+      output += "\n    Current job logs:\n";
+      numLines += 2;
       const logs = await getJobLogs(job.id);
-      console.log(logs.split("\n").map(line => `      ${line}`).join("\n"));
+      const logLines = logs.split("\n").map(line => `      ${line}`).join("\n");
+      output += logLines + "\n";
+      numLines += countLines(logLines) + 1;
     }
   }
 
   if (run.status === "completed") {
     const emoji = run.conclusion ? STATUS_EMOJI[run.conclusion as keyof typeof STATUS_EMOJI] : "❓";
-    console.log(`Run completed with conclusion: ${emoji} ${run.conclusion}`);
-    return true;
+    output += `Run completed with conclusion: ${emoji} ${run.conclusion}\n`;
+    numLines++;
   }
-  return false;
+  
+  console.log(output);
+  return run.status === "completed";
 }
 
 async function waitForRunWithCommit(sha: string): Promise<Run | null> {
@@ -333,4 +348,4 @@ async function actionLogsMain() {
 
 if (import.meta.main) {
   actionLogsMain();
-} 
+}
