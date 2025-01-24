@@ -17,8 +17,7 @@ jobs:
   check-changes:
     needs: test
     uses: ./.github/workflows/check-changes.yml
-    secrets:
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    secrets: inherit  # Inherit all available secrets, but don't require specific ones
 
   release:
     needs: check-changes

@@ -9,6 +9,9 @@ on:
       release_notes:
         description: "Generated release notes"
         value: ${{ jobs.check.outputs.release_notes }}
+    secrets:
+      ANTHROPIC_API_KEY:
+        required: false  # Make the API key optional
 
 jobs:
   check:
@@ -23,8 +26,17 @@ jobs:
       - uses: denoland/setup-deno@v1
         with:
           deno-version: v1.x
+      - name: Debug Secrets
+        run: |
+          if [ -n "${{ secrets.ANTHROPIC_API_KEY }}" ]; then
+            echo "ANTHROPIC_API_KEY is set"
+          else
+            echo "ANTHROPIC_API_KEY is not set"
+          fi
       - name: Verify Changes
         id: verify-changes
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           ./scripts/check-changes ${{ github.event.before }}
           {
