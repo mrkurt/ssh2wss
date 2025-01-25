@@ -103,8 +103,9 @@ async function getCommitHistory(since?: string): Promise<CommitInfo[]> {
 
 function isSubstantialFile(file: string): boolean {
   // Ignore test files, docs, GitHub config, utility scripts
+  // EXCEPT Windows client test files which are critical for cross-platform support
   if (
-    file.endsWith("_test.go") ||
+    (file.endsWith("_test.go") && !file.includes("client_windows_test.go")) ||
     file.endsWith(".md") ||
     file.startsWith(".github/") ||
     file.startsWith("scripts/") ||

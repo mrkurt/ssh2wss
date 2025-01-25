@@ -1,13 +1,14 @@
 name: Windows Client Tests
 
 on:
+  workflow_call:  # Allow this workflow to be called by others
   push:
     branches: [ main, feat/windows-client ]
   pull_request:
     branches: [ main ]
 
 jobs:
-  test-windows-client:
+  windows-client-test:  # Changed from test_windows_client
     name: Test Windows Client with Linux Server
     runs-on: windows-latest
     
