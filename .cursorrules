@@ -3,8 +3,11 @@
 2. ALWAYS look at other files in the same directory to see if the function you're writing already exists
 3. NEVER start with defensive programming, keep it simple, let things crash
 4. ALWAYS present a plan before implementing anything
-5. ALWAYS add docs to source code when we have spent time fixing a problem
-6. ALWAYS offer to write tests for functionality
+5. ALWAYS add comments to source code explaining our decisions after we have spent time fixing a problem
+6. ALWAYS respect comments, don't rewrite any functionality unless we've discussed it
+7. NEVER change comments without permission, you may add new comment lines however
+8. ALWAYS offer to write tests for functionality
+9. When you make changes ALWAYS start with the minimum possible change that demonstrates progress
 </universal_rules>
 <go_dev_rules>
 1. Use Go standard library packages whenever possible
