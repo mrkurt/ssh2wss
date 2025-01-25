@@ -32,13 +32,13 @@ jobs:
     needs: macos-build
     uses: ./.github/workflows/test-macos.yml
 
-  windows-build:
-    name: "🪟 Build"
-    uses: ./.github/workflows/build-windows.yml
+  windows-client-build:
+    name: "🪟 Client Build"
+    uses: ./.github/workflows/build-windows-client.yml
 
   windows-test:
     name: "🪟 Test"
-    needs: windows-build
+    needs: windows-client-build
     uses: ./.github/workflows/test-windows.yml
 
   check-changes:
