@@ -1,29 +1,62 @@
-name: CI/CD Pipeline
+# WARNING: NEVER merge/inline workflows from other files into this one.
+# Each workflow should be in its own file and called from here.
+# This keeps the workflows modular and reusable.
+
+name: CI
 
 on:
   push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
-  workflow_dispatch:  # Allow manual trigger
+    branches: [ "**" ]  # Run on all branches
+  pull_request:  # Run on all PRs
+  workflow_dispatch:
 
 permissions:
   contents: write  # Needed for creating releases
 
 jobs:
-  test:
-    uses: ./.github/workflows/test.yml
+  linux-build:
+    name: "🐧 Build"
+    uses: ./.github/workflows/build-linux.yml
+
+  linux-test:
+    name: "🐧 Test"
+    needs: linux-build
+    uses: ./.github/workflows/test-linux.yml
+
+  macos-build:
+    name: "🍎 Build"
+    uses: ./.github/workflows/build-macos.yml
+
+  macos-test:
+    name: "🍎 Test"
+    needs: macos-build
+    uses: ./.github/workflows/test-macos.yml
 
   check-changes:
-    needs: test
+    name: "🔍 Check Changes"
+    needs: [linux-test, macos-test]
     uses: ./.github/workflows/check-changes.yml
-    secrets: inherit  # Inherit all available secrets, but don't require specific ones
+
+  would_release:
+    name: "📝 Would Release"
+    needs: check-changes
+    if: |
+      github.ref != 'refs/heads/main' &&
+      needs.check-changes.outputs.has_changes == 'true'
+    uses: ./.github/workflows/would-release.yml
+    with:
+      release_notes: ${{ needs.check-changes.outputs.release_notes }}
+      sha: ${{ github.sha }}
 
   release:
+    name: "🚀 Release"
     needs: check-changes
-    if: needs.check-changes.outputs.has_substantial_changes == 'true'
+    if: |
+      github.ref == 'refs/heads/main' &&
+      needs.check-changes.outputs.has_changes == 'true'
     permissions:
       contents: write  # Explicitly pass write permission to release workflow
     uses: ./.github/workflows/release.yml
     with:
-      release_notes: ${{ needs.check-changes.outputs.release_notes }} 
+      release_notes: ${{ needs.check-changes.outputs.release_notes }}
+      sha: ${{ github.sha }} 

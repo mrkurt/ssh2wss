@@ -1,0 +1,24 @@
+name: macOS Test
+
+on:
+  workflow_call:  # Makes this workflow reusable
+
+jobs:
+  test:
+    runs-on: macos-latest
+    timeout-minutes: 5
+    steps:
+      - id: checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history and tags
+
+      - id: setup-go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.22'
+
+      - id: go-test
+        run: go test -v ./...
+        env:
+          CGO_ENABLED: "1"  # Enable CGO for native builds 

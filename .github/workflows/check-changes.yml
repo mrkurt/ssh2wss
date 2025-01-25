@@ -1,51 +1,35 @@
 name: Check Changes
 
 on:
-  workflow_call:
+  workflow_call:  # Makes this workflow reusable
     outputs:
-      has_substantial_changes:
+      has_changes:
         description: "Whether substantial changes were found"
-        value: ${{ jobs.check.outputs.has_substantial_changes }}
+        value: ${{ jobs.check.outputs.has_changes }}
       release_notes:
-        description: "Generated release notes"
+        description: "Release notes if changes were found"
         value: ${{ jobs.check.outputs.release_notes }}
-    secrets:
-      ANTHROPIC_API_KEY:
-        required: false  # Make the API key optional
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # Explicitly use the upcoming version
     outputs:
-      has_substantial_changes: ${{ steps.verify-changes.outputs.has_substantial_changes }}
-      release_notes: ${{ steps.verify-changes.outputs.release_notes }}
+      has_changes: ${{ steps.check.outputs.has_changes }}
+      release_notes: ${{ steps.check.outputs.release_notes }}
     steps:
-      - uses: actions/checkout@v4
+      - id: checkout
+        uses: actions/checkout@v4
         with:
-          fetch-depth: 0
-      - uses: denoland/setup-deno@v1
-        with:
-          deno-version: 2.x
-      - name: Debug Secrets
+          fetch-depth: 0  # Fetch all history and tags
+
+      - id: check
         run: |
-          if [ -n "${{ secrets.ANTHROPIC_API_KEY }}" ]; then
-            echo "ANTHROPIC_API_KEY is set"
-          else
-            echo "ANTHROPIC_API_KEY is not set"
-          fi
-      - name: Verify Changes
-        id: verify-changes
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: |
-          set -x  # Enable command echo
           if ./scripts/check-changes; then
-            echo "has_substantial_changes=true" >> $GITHUB_OUTPUT
-            {
-              echo "release_notes<<EOF"
-              cat release_notes.txt
-              echo "EOF"
-            } >> $GITHUB_OUTPUT
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+            echo "release_notes<<EOF" >> $GITHUB_OUTPUT
+            ./scripts/check-changes --notes >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
           else
-            echo "has_substantial_changes=false" >> $GITHUB_OUTPUT
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+            echo "release_notes=No substantial changes" >> $GITHUB_OUTPUT
           fi 

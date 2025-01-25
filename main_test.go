@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -164,21 +165,51 @@ func TestBridge(t *testing.T) {
 	})
 
 	// Test SSH functionality
-	t.Run("Command Execution", func(t *testing.T) {
-		tests := []struct {
+	t.Run("Command_Execution", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			// Just check if SSH is available
+			sshPath, err := exec.LookPath("ssh")
+			t.Logf("SSH binary location: %s (err: %v)", sshPath, err)
+		}
+
+		var tests []struct {
 			name     string
 			command  string
 			expected string
-		}{
-			{"ls", "ls -la", "total"},
-			{"whoami", "whoami", os.Getenv("USER")},
-			{"pwd", "pwd", os.Getenv("PWD")},
-			{"echo", "echo 'test message'", "test message"},
-			{"env", "env", "HOME="},
+		}
+
+		if runtime.GOOS == "windows" {
+			tests = []struct {
+				name     string
+				command  string
+				expected string
+			}{
+				{"directory listing", "dir", "Directory of"},
+				{"username", "echo %USERNAME%", os.Getenv("USERNAME")},
+				{"current dir", "cd", os.Getenv("CD")},
+				{"echo", "echo test message", "test message"},
+				{"environment", "set", "USERPROFILE="},
+			}
+		} else {
+			tests = []struct {
+				name     string
+				command  string
+				expected string
+			}{
+				{"directory listing", "ls -la", "total"},
+				{"whoami", "whoami", os.Getenv("USER")},
+				{"pwd", "pwd", os.Getenv("PWD")},
+				{"echo", "echo 'test message'", "test message"},
+				{"env", "env", "HOME="},
+			}
 		}
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
+				t.Logf("Starting SSH command test: %s", tt.name)
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+
 				sshCmd := exec.CommandContext(ctx, "ssh",
 					"-p", fmt.Sprintf("%d", testSSHPort),
 					"-o", "StrictHostKeyChecking=no",
@@ -187,14 +218,18 @@ func TestBridge(t *testing.T) {
 					"localhost",
 					tt.command)
 
+				t.Logf("Running SSH command: %v", sshCmd.Args)
 				output, err := sshCmd.CombinedOutput()
+				t.Logf("SSH command completed with error: %v", err)
 				if err != nil {
 					t.Fatalf("SSH command failed: %v\nOutput: %s", err, output)
 				}
 
+				t.Logf("Command output: %s", string(output))
 				if !strings.Contains(string(output), tt.expected) {
 					t.Errorf("Expected output to contain %q, got %q", tt.expected, string(output))
 				}
+				t.Logf("Test completed successfully")
 			})
 		}
 	})
@@ -207,7 +242,7 @@ func TestBridge(t *testing.T) {
 			"-p", fmt.Sprintf("%d", testSSHPort),
 			"-o", "StrictHostKeyChecking=no",
 			"-o", "UserKnownHostsFile="+knownHostsFile,
-			"-o", "LogLevel=ERROR",
+			"-o", "LogLevel=DEBUG3",
 			"localhost")
 
 		stdin, err := sshCmd.StdinPipe()
@@ -223,14 +258,24 @@ func TestBridge(t *testing.T) {
 			t.Fatalf("Failed to start SSH: %v", err)
 		}
 
-		// Send some commands
-		commands := []string{
-			"echo $SHELL\n",
-			"pwd\n",
-			"exit\n",
+		// Send platform-specific commands
+		var commands []string
+		if runtime.GOOS == "windows" {
+			commands = []string{
+				"echo %COMSPEC%\n",
+				"cd\n",
+				"exit\n",
+			}
+		} else {
+			commands = []string{
+				"echo $SHELL\n",
+				"pwd\n",
+				"exit\n",
+			}
 		}
 
 		for _, cmd := range commands {
+			t.Logf("Sending command: %q", cmd)
 			if _, err := io.WriteString(stdin, cmd); err != nil {
 				t.Fatalf("Failed to write command: %v", err)
 			}
@@ -242,8 +287,12 @@ func TestBridge(t *testing.T) {
 		}
 
 		output := stdout.String()
-		if !strings.Contains(output, "/bin/") {
-			t.Errorf("Expected output to contain shell path, got %q", output)
+		expectedOutput := "/bin/"
+		if runtime.GOOS == "windows" {
+			expectedOutput = "cmd.exe"
+		}
+		if !strings.Contains(output, expectedOutput) {
+			t.Errorf("Expected output to contain %q, got %q", expectedOutput, output)
 		}
 	})
 }
