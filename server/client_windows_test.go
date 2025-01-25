@@ -10,6 +10,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
+	"flag"
 	"fmt"
 	"io"
 	"net"
@@ -22,6 +23,8 @@ import (
 
 	"golang.org/x/crypto/ssh"
 )
+
+var serverIP = flag.String("server-ip", "localhost", "IP address of the SSH server for testing")
 
 func findWindowsSSHClient(t *testing.T) string {
 	// Check System32 first (where Windows OpenSSH is typically installed)
@@ -42,43 +45,53 @@ func findWindowsSSHClient(t *testing.T) string {
 }
 
 func TestWindowsClientToLinuxServer(t *testing.T) {
+	flag.Parse() // Parse flags to get server IP
+
 	// Find OpenSSH client
 	sshPath := findWindowsSSHClient(t)
 
-	// Start a test server
-	listener, err := net.Listen("tcp", "localhost:0")
-	if err != nil {
-		t.Fatalf("Failed to find available port: %v", err)
-	}
-	port := listener.Addr().(*net.TCPAddr).Port
-	listener.Close()
+	var server *SSHServer
+	var port int
 
-	// Generate test key
-	keyBytes, err := generateWindowsTestKey()
-	if err != nil {
-		t.Fatalf("Failed to generate test key: %v", err)
-	}
-
-	// Parse the key for server use
-	signer, err := ssh.ParsePrivateKey(keyBytes)
-	if err != nil {
-		t.Fatalf("Failed to parse private key: %v", err)
-	}
-
-	// Create and start SSH server
-	server, err := NewSSHServer(port, signer)
-	if err != nil {
-		t.Fatalf("Failed to create SSH server: %v", err)
-	}
-
-	go func() {
-		if err := server.Start(); err != nil {
-			t.Logf("Server stopped: %v", err)
+	if *serverIP == "localhost" {
+		// Start a local test server if no remote server specified
+		listener, err := net.Listen("tcp", "localhost:0")
+		if err != nil {
+			t.Fatalf("Failed to find available port: %v", err)
 		}
-	}()
+		port = listener.Addr().(*net.TCPAddr).Port
+		listener.Close()
 
-	// Wait for server to start
-	time.Sleep(100 * time.Millisecond)
+		// Generate test key
+		keyBytes, err := generateWindowsTestKey()
+		if err != nil {
+			t.Fatalf("Failed to generate test key: %v", err)
+		}
+
+		// Parse the key for server use
+		signer, err := ssh.ParsePrivateKey(keyBytes)
+		if err != nil {
+			t.Fatalf("Failed to parse private key: %v", err)
+		}
+
+		// Create and start SSH server
+		server, err = NewSSHServer(port, signer)
+		if err != nil {
+			t.Fatalf("Failed to create SSH server: %v", err)
+		}
+
+		go func() {
+			if err := server.Start(); err != nil {
+				t.Logf("Server stopped: %v", err)
+			}
+		}()
+
+		// Wait for server to start
+		time.Sleep(100 * time.Millisecond)
+	} else {
+		// Use the provided server IP and port
+		port = 2222 // Default port for the container
+	}
 
 	// Create temp dir for known_hosts
 	tmpDir, err := os.MkdirTemp("", "ssh-test")
@@ -97,7 +110,7 @@ func TestWindowsClientToLinuxServer(t *testing.T) {
 			"-p", fmt.Sprintf("%d", port),
 			"-o", "StrictHostKeyChecking=no",
 			"-o", "UserKnownHostsFile="+knownHostsFile,
-			"localhost",
+			fmt.Sprintf("root@%s", *serverIP),
 			"echo test")
 
 		output, err := cmd.CombinedOutput()
@@ -119,7 +132,7 @@ func TestWindowsClientToLinuxServer(t *testing.T) {
 			"-p", fmt.Sprintf("%d", port),
 			"-o", "StrictHostKeyChecking=no",
 			"-o", "UserKnownHostsFile="+knownHostsFile,
-			"localhost")
+			fmt.Sprintf("root@%s", *serverIP))
 
 		stdin, err := cmd.StdinPipe()
 		if err != nil {
@@ -169,7 +182,7 @@ func TestWindowsClientToLinuxServer(t *testing.T) {
 			"-p", fmt.Sprintf("%d", port),
 			"-o", "StrictHostKeyChecking=no",
 			"-o", "UserKnownHostsFile="+knownHostsFile,
-			"localhost",
+			fmt.Sprintf("root@%s", *serverIP),
 			"stty size")
 
 		output, err := cmd.CombinedOutput()

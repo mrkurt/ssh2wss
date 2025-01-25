@@ -8,6 +8,17 @@ jobs:
     name: Test Windows Client
     runs-on: windows-latest
     
+    # Set up Linux container for our SSH server
+    services:
+      ssh-server:
+        image: golang:1.21-bookworm
+        ports:
+          - 2222:2222
+        options: >-
+          --name ssh-server
+          -v ${{ github.workspace }}:/app
+          --workdir /app
+    
     steps:
     - uses: actions/checkout@v4
     
@@ -16,6 +27,25 @@ jobs:
       with:
         go-version: '1.21'
         check-latest: true
+    
+    - name: Set up Linux SSH Server
+      shell: powershell
+      run: |
+        # Get container IP
+        $containerIP = docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' ssh-server
+        echo "CONTAINER_IP=$containerIP" | Out-File -FilePath $env:GITHUB_ENV -Append
+        
+        # Build and start our SSH server in the container
+        docker exec ssh-server bash -c '
+          # Build the server
+          go build -o ssh2wss-server ./cmd/server &&
+          # Generate test key
+          ssh-keygen -t rsa -f test_key -N "" &&
+          # Start our server
+          ./ssh2wss-server -port 2222 -key test_key &
+          # Wait for server to start
+          sleep 5
+        '
         
     - name: Install OpenSSH Client
       shell: powershell
@@ -29,5 +59,8 @@ jobs:
         ssh -V
         
     - name: Run Windows Client Tests
+      env:
+        SSH_SERVER_IP: ${{ env.CONTAINER_IP }}
       run: |
-        go test -v ./server -run "^TestWindowsClientToLinuxServer$" 
+        # Run tests with Linux server container IP
+        go test -v ./server -run "^TestWindowsClientToLinuxServer$" -args -server-ip=$env:SSH_SERVER_IP 

@@ -1,5 +1,12 @@
-# Go Development Rules
-
+<universal_rules>
+1. NEVER create new files without checking to see if they already exist
+2. ALWAYS look at other files in the same directory to see if the function you're writing already exists
+3. NEVER start with defensive programming, keep it simple, let things crash
+4. ALWAYS present a plan before implementing anything
+5. ALWAYS add docs to source code when we have spent time fixing a problem
+6. ALWAYS offer to write tests for functionality
+</universal_rules>
+<go_dev_rules>
 1. Use Go standard library packages whenever possible
 2. Only use `golang.org/x/*` packages if needed and not available in stdlib
 3. Keep each feature in a single, complete file
@@ -19,7 +26,7 @@
 13. Pin all dependency versions in go.mod
 14. Include proper error handling and logging
 15. Write tests for all functionality
-
+</go_dev_rules>
 <calling_external_packages>
 ALWAYS explain package suggestions with:
 1. Package popularity metrics (stars, major users)
