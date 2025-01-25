@@ -1,0 +1,36 @@
+name: Windows Client Tests
+
+on:
+  push:
+    branches: [ main, feat/windows-client ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test-windows-client:
+    name: Test Windows Client with Linux Server
+    runs-on: windows-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.21'
+        check-latest: true
+        
+    - name: Install OpenSSH Client
+      shell: powershell
+      run: |
+        # Check if OpenSSH Client is installed
+        if (!(Get-WindowsCapability -Online | Where-Object Name -like 'OpenSSH.Client*').State -eq 'Installed') {
+          # Install OpenSSH Client
+          Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0
+        }
+        # Verify installation
+        ssh -V
+        
+    - name: Run Windows Client Tests
+      run: |
+        go test -v ./server -run "^TestWindowsClientToLinuxServer$" 
