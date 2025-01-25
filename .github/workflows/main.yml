@@ -2,28 +2,48 @@ name: CI/CD Pipeline
 
 on:
   push:
-    branches: [ main ]
   pull_request:
-    branches: [ main ]
-  workflow_dispatch:  # Allow manual trigger
+  workflow_dispatch:
 
 permissions:
-  contents: write  # Needed for creating releases
+  contents: write
 
 jobs:
-  test:
-    uses: ./.github/workflows/test.yml
+  unix-build:
+    name: "🐧 🦊 🍎 Build"
+    uses: ./.github/workflows/build-unix.yml
 
-  check-changes:
-    needs: test
+  unix-test:
+    name: "🐧 🦊 🍎 Test"
+    needs: unix-build
+    uses: ./.github/workflows/test-unix.yml
+
+  check_changes:
+    name: "🔍 Check Changes"
+    needs: [unix-test]
     uses: ./.github/workflows/check-changes.yml
-    secrets: inherit  # Inherit all available secrets, but don't require specific ones
+    secrets: inherit
 
   release:
-    needs: check-changes
-    if: needs.check-changes.outputs.has_substantial_changes == 'true'
+    name: "🚀 Release"
+    needs: check_changes
+    if: |
+      github.ref == 'refs/heads/main' && 
+      needs.check_changes.outputs.has_substantial_changes == 'true'
     permissions:
-      contents: write  # Explicitly pass write permission to release workflow
+      contents: write
     uses: ./.github/workflows/release.yml
     with:
-      release_notes: ${{ needs.check-changes.outputs.release_notes }} 
+      release_notes: ${{ needs.check_changes.outputs.release_notes }}
+
+  would_release:
+    name: "📝 Would Release"
+    needs: check_changes
+    if: |
+      github.ref != 'refs/heads/main' && 
+      needs.check_changes.outputs.has_substantial_changes == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "This branch has changes that would trigger a release on main:"
+          echo "${{ needs.check_changes.outputs.release_notes }}" 
