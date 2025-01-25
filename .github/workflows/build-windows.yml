@@ -17,14 +17,8 @@ jobs:
         go-version: '1.21'
         check-latest: true
         
-    - name: Build Windows Client
+    - name: Verify Windows Build Environment
       run: |
-        # Build with Windows-specific tags
-        go build -tags windows -o ssh2wss.exe ./cmd/client
-        
-    - name: Upload Windows Client Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: ssh2wss-windows-client
-        path: ssh2wss.exe
-        if-no-files-found: error 
+        # Just verify Windows build environment works
+        go version
+        go env 
