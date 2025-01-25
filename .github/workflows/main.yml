@@ -1,49 +1,62 @@
-name: CI/CD Pipeline
+# WARNING: NEVER merge/inline workflows from other files into this one.
+# Each workflow should be in its own file and called from here.
+# This keeps the workflows modular and reusable.
+
+name: CI
 
 on:
   push:
-  pull_request:
+    branches: [ "**" ]  # Run on all branches
+  pull_request:  # Run on all PRs
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: write  # Needed for creating releases
 
 jobs:
-  unix-build:
-    name: "🐧 🦊 🍎 Build"
-    uses: ./.github/workflows/build-unix.yml
+  linux-build:
+    name: "🐧 Build"
+    uses: ./.github/workflows/build-linux.yml
 
-  unix-test:
-    name: "🐧 🦊 🍎 Test"
-    needs: unix-build
-    uses: ./.github/workflows/test-unix.yml
+  linux-test:
+    name: "🐧 Test"
+    needs: linux-build
+    uses: ./.github/workflows/test-linux.yml
 
-  check_changes:
+  macos-build:
+    name: "🍎 Build"
+    uses: ./.github/workflows/build-macos.yml
+
+  macos-test:
+    name: "🍎 Test"
+    needs: macos-build
+    uses: ./.github/workflows/test-macos.yml
+
+  check-changes:
     name: "🔍 Check Changes"
-    needs: [unix-test]
+    needs: [linux-test, macos-test]
     uses: ./.github/workflows/check-changes.yml
-    secrets: inherit
-
-  release:
-    name: "🚀 Release"
-    needs: check_changes
-    if: |
-      github.ref == 'refs/heads/main' && 
-      needs.check_changes.outputs.has_substantial_changes == 'true'
-    permissions:
-      contents: write
-    uses: ./.github/workflows/release.yml
-    with:
-      release_notes: ${{ needs.check_changes.outputs.release_notes }}
 
   would_release:
     name: "📝 Would Release"
-    needs: check_changes
+    needs: check-changes
     if: |
-      github.ref != 'refs/heads/main' && 
-      needs.check_changes.outputs.has_substantial_changes == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - run: |
-          echo "This branch has changes that would trigger a release on main:"
-          echo "${{ needs.check_changes.outputs.release_notes }}" 
+      github.ref != 'refs/heads/main' &&
+      needs.check-changes.outputs.has_changes == 'true'
+    uses: ./.github/workflows/would-release.yml
+    with:
+      release_notes: ${{ needs.check-changes.outputs.release_notes }}
+      sha: ${{ github.sha }}
+
+  release:
+    name: "🚀 Release"
+    needs: check-changes
+    if: |
+      github.ref == 'refs/heads/main' &&
+      needs.check-changes.outputs.has_changes == 'true'
+    permissions:
+      contents: write  # Explicitly pass write permission to release workflow
+    uses: ./.github/workflows/release.yml
+    with:
+      release_notes: ${{ needs.check-changes.outputs.release_notes }}
+      sha: ${{ github.sha }} 

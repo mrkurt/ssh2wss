@@ -1,0 +1,55 @@
+# This workflow checks if changes would trigger a release after a delay.
+# It follows the same pattern as release.yml but only shows what would happen.
+#
+# The delay strategy allows:
+# - Multiple PRs to be merged within the 30 minute window
+# - Shows what changes would be bundled into a release
+# - Helps reviewers understand release impact
+
+name: Would Release
+
+on:
+  workflow_call:  # Makes this workflow reusable
+    inputs:
+      release_notes:
+        description: "Generated release notes from previous step"
+        required: false
+        type: string
+      sha:
+        description: "The SHA that triggered this workflow"
+        required: true
+        type: string
+
+jobs:
+  wait:
+    runs-on: ubuntu-24.04  # Explicitly use the upcoming version
+    steps:
+      - id: wait
+        run: |
+          echo "Waiting 30 minutes before checking potential release..."
+          sleep 1800  # 30 minutes in seconds
+
+  check:
+    needs: wait
+    runs-on: ubuntu-24.04  # Explicitly use the upcoming version
+    steps:
+      - id: checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history and tags
+
+      - id: check-latest
+        run: |
+          git fetch origin main
+          LATEST_SHA=$(git rev-parse origin/main)
+          if [ "${{ inputs.sha }}" != "$LATEST_SHA" ]; then
+            echo "::notice::Newer commits exist, skipping release preview"
+            echo "SKIP_RELEASE=true" >> $GITHUB_ENV
+          fi
+
+      - id: show-notes
+        if: env.SKIP_RELEASE != 'true'
+        run: |
+          echo "::notice::This branch would create a release if merged to main with notes:"
+          echo ""
+          echo "${{ inputs.release_notes }}" 

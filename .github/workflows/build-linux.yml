@@ -1,0 +1,22 @@
+on:
+  workflow_call:  # Makes this workflow reusable
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04  # Explicitly use the upcoming version
+    timeout-minutes: 5
+    steps:
+      - id: checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history and tags
+
+      - id: setup-go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.22'
+
+      - id: go-build
+        run: go build -v ./...
+        env:
+          CGO_ENABLED: "1"  # Enable CGO for native builds 

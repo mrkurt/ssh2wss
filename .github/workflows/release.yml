@@ -1,3 +1,20 @@
+# This workflow creates releases with a delay strategy to bundle multiple merges:
+#
+# 1. When commits are merged to main, this workflow starts but waits 30 minutes
+# 2. After waiting, it checks if newer commits exist on main:
+#    - If yes: skips this release (those commits will trigger their own workflow)
+#    - If no: creates the release with all changes up to this point
+#
+# This strategy allows:
+# - Multiple PRs to be merged within the 30 minute window
+# - All changes to be bundled into a single release
+# - Avoids creating many small releases when merging PRs close together
+#
+# The workflow will:
+# 1. Wait 30 minutes (wait job)
+# 2. Check for newer commits and create release if none exist (create job)
+# 3. Build and upload binaries for all platforms in parallel (build-* jobs)
+
 name: Release
 
 on:
@@ -7,28 +24,53 @@ on:
         description: "Generated release notes from previous step"
         required: false
         type: string
+      sha:
+        description: "The SHA that triggered this workflow"
+        required: true
+        type: string
+    outputs:
+      upload_url:
+        description: "Upload URL for the created release"
+        value: ${{ jobs.create.outputs.upload_url }}
+      version:
+        description: "Version number for the release"
+        value: ${{ jobs.create.outputs.version }}
 
 permissions:
   contents: write  # Needed for creating releases and uploading assets
 
 jobs:
-  release:
-    runs-on: ubuntu-latest
+  wait:
+    runs-on: ubuntu-24.04  # Explicitly use the upcoming version
     steps:
-      - uses: actions/checkout@v4
+      - id: wait
+        run: |
+          echo "Waiting 30 minutes before checking for release..."
+          sleep 1800  # 30 minutes in seconds
+
+  create:
+    needs: wait
+    runs-on: ubuntu-24.04  # Explicitly use the upcoming version
+    outputs:
+      upload_url: ${{ steps.create-release.outputs.upload_url }}
+      version: ${{ steps.get-version.outputs.version }}
+    steps:
+      - id: checkout
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0  # Fetch all history and tags
 
-      - name: Set up Go
-        uses: actions/setup-go@v4
-        with:
-          go-version: '1.21'
+      - id: check-latest
+        run: |
+          git fetch origin main
+          LATEST_SHA=$(git rev-parse origin/main)
+          if [ "${{ inputs.sha }}" != "$LATEST_SHA" ]; then
+            echo "::notice::Newer commits exist on main, skipping release creation"
+            echo "SKIP_RELEASE=true" >> $GITHUB_ENV
+          fi
 
-      - name: Get dependencies
-        run: go get -v ./...
-
-      - name: Get current version
-        id: version
+      - id: get-version
+        if: env.SKIP_RELEASE != 'true'
         run: |
           LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.1.0")
           PATCH=$(echo $LAST_TAG | cut -d. -f3)
@@ -36,50 +78,92 @@ jobs:
           NEW_TAG="0.1.$NEW_PATCH"
           echo "version=$NEW_TAG" >> $GITHUB_OUTPUT
 
-      - name: Build for multiple platforms
-        run: |
-          GOOS=linux GOARCH=amd64 go build -o ssh2wss-linux-amd64
-          GOOS=darwin GOARCH=amd64 go build -o ssh2wss-darwin-amd64
-          GOOS=darwin GOARCH=arm64 go build -o ssh2wss-darwin-arm64
-
-      - name: Create Release
-        id: create_release
+      - id: create-release
+        if: env.SKIP_RELEASE != 'true'
         uses: actions/create-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: v${{ steps.version.outputs.version }}
-          release_name: Release v${{ steps.version.outputs.version }}
+          tag_name: v${{ steps.get-version.outputs.version }}
+          release_name: Release v${{ steps.get-version.outputs.version }}
           body: ${{ inputs.release_notes || 'No release notes provided' }}
           draft: false
           prerelease: true
 
-      - name: Upload Linux AMD64 Binary
+  build-linux:
+    needs: create
+    if: needs.create.result == 'success'
+    runs-on: ubuntu-24.04  # Explicitly use the upcoming version
+    steps:
+      - id: checkout
+        uses: actions/checkout@v4
+
+      - id: setup-go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.22'
+
+      - id: build
+        run: GOOS=linux GOARCH=amd64 go build -o ssh2wss-linux-amd64
+
+      - id: upload
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          upload_url: ${{ needs.create.outputs.upload_url }}
           asset_path: ./ssh2wss-linux-amd64
           asset_name: ssh2wss-linux-amd64
           asset_content_type: application/octet-stream
 
-      - name: Upload Darwin AMD64 Binary
+  build-darwin-amd64:
+    needs: create
+    if: needs.create.result == 'success'
+    runs-on: macos-latest
+    steps:
+      - id: checkout
+        uses: actions/checkout@v4
+
+      - id: setup-go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.22'
+
+      - id: build
+        run: GOOS=darwin GOARCH=amd64 go build -o ssh2wss-darwin-amd64
+
+      - id: upload
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          upload_url: ${{ needs.create.outputs.upload_url }}
           asset_path: ./ssh2wss-darwin-amd64
           asset_name: ssh2wss-darwin-amd64
           asset_content_type: application/octet-stream
 
-      - name: Upload Darwin ARM64 Binary
+  build-darwin-arm64:
+    needs: create
+    if: needs.create.result == 'success'
+    runs-on: macos-latest
+    steps:
+      - id: checkout
+        uses: actions/checkout@v4
+
+      - id: setup-go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.22'
+
+      - id: build
+        run: GOOS=darwin GOARCH=arm64 go build -o ssh2wss-darwin-arm64
+
+      - id: upload
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          upload_url: ${{ needs.create.outputs.upload_url }}
           asset_path: ./ssh2wss-darwin-arm64
           asset_name: ssh2wss-darwin-arm64
           asset_content_type: application/octet-stream 
