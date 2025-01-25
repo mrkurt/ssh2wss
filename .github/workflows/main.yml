@@ -32,18 +32,18 @@ jobs:
     needs: macos-build
     uses: ./.github/workflows/test-macos.yml
 
-  windows-client-build:
-    name: "🪟 Client Build"
-    uses: ./.github/workflows/build-windows-client.yml
+  windows-build:
+    name: "🪟 Build"
+    uses: ./.github/workflows/build-windows.yml
 
-  windows-client:
-    name: "🪟 Client Test"
-    needs: windows-client-build
-    uses: ./.github/workflows/windows-client-test.yml
+  windows-test:
+    name: "🪟 Test"
+    needs: windows-build
+    uses: ./.github/workflows/test-windows.yml
 
   check-changes:
     name: "🔍 Check Changes"
-    needs: [linux-test, macos-test, windows-client]
+    needs: [linux-test, macos-test, windows-test]
     uses: ./.github/workflows/check-changes.yml
 
   would_release:
