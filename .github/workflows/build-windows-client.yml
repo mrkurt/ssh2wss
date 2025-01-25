@@ -1,0 +1,30 @@
+name: Build Windows Client
+
+on:
+  workflow_call:  # Allow this workflow to be called by others
+
+jobs:
+  build-windows-client:
+    name: Build Windows Client
+    runs-on: windows-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.21'
+        check-latest: true
+        
+    - name: Build Windows Client
+      run: |
+        # Build with Windows-specific tags
+        go build -tags windows -o ssh2wss.exe ./cmd/client
+        
+    - name: Upload Windows Client Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ssh2wss-windows-client
+        path: ssh2wss.exe
+        if-no-files-found: error 
