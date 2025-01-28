@@ -8,7 +8,7 @@ import (
 	"os"
 	"strings"
 
-	"ssh2wss/auth"
+	"flyssh/auth"
 
 	"golang.org/x/net/websocket"
 )

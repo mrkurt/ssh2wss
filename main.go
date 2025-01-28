@@ -6,8 +6,8 @@ import (
 	"log"
 	"os"
 
-	"ssh2wss/auth"
-	"ssh2wss/server"
+	"flyssh/auth"
+	"flyssh/server"
 )
 
 func main() {

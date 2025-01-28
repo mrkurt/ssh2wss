@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"ssh2wss/auth"
-	"ssh2wss/server"
+	"flyssh/auth"
+	"flyssh/server"
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/net/websocket"
