@@ -96,8 +96,8 @@ ws.setRequestHeader('Authorization', 'Bearer your-secret-token');
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/ssh2wss.git
-cd ssh2wss
+git clone https://github.com/yourusername/flyssh.git
+cd flyssh
 ```
 
 2. Install Go (1.21 or later):
@@ -136,18 +136,18 @@ go run main.go -ssh-port 2222 -ws-port 8081
 
 1. Build the server:
 ```bash
-go build -o ssh2wss
+go build -o flyssh
 ```
 
 2. Generate a secure token:
 ```bash
-./ssh2wss -generate-token
+./flyssh -generate-token
 ```
 
 3. Set up environment:
 ```bash
 # Store token securely (e.g., in systemd environment file)
-echo "WSS_AUTH_TOKEN=your-generated-token" > /etc/ssh2wss/env
+echo "WSS_AUTH_TOKEN=your-generated-token" > /etc/flyssh/env
 ```
 
 4. Create systemd service (optional):
@@ -157,11 +157,11 @@ Description=SSH to WebSocket Bridge Server
 After=network.target
 
 [Service]
-ExecStart=/usr/local/bin/ssh2wss -ws-port 8081
-EnvironmentFile=/etc/ssh2wss/env
+ExecStart=/usr/local/bin/flyssh -ws-port 8081
+EnvironmentFile=/etc/flyssh/env
 Restart=always
-User=ssh2wss
-Group=ssh2wss
+User=flyssh
+Group=flyssh
 
 [Install]
 WantedBy=multi-user.target
@@ -169,27 +169,27 @@ WantedBy=multi-user.target
 
 5. Start the service:
 ```bash
-sudo systemctl enable ssh2wss
-sudo systemctl start ssh2wss
+sudo systemctl enable flyssh
+sudo systemctl start flyssh
 ```
 
 ### Client Setup
 
 1. Build the client:
 ```bash
-go build -o ssh2wss-client
+go build -o flyssh-client
 ```
 
 2. Configure authentication:
 ```bash
 # Store token securely
-echo "WSS_AUTH_TOKEN=your-token" > ~/.ssh2wss/config
-chmod 600 ~/.ssh2wss/config
+echo "WSS_AUTH_TOKEN=your-token" > ~/.flyssh/config
+chmod 600 ~/.flyssh/config
 ```
 
 3. Start the client:
 ```bash
-./ssh2wss-client -remote ws://your-server:8081
+./flyssh-client -remote ws://your-server:8081
 ```
 
 4. Connect via SSH:
