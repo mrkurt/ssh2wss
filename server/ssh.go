@@ -41,6 +41,11 @@ func NewSSHServer(port int, hostKey []byte) (*SSHServer, error) {
 
 // Start starts the SSH server
 func (s *SSHServer) Start() error {
+	// If port is 0, don't start listening - this server will only handle passed connections
+	if s.port == 0 {
+		return nil
+	}
+
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", s.port))
 	if err != nil {
 		return fmt.Errorf("failed to listen on port %d: %v", s.port, err)
@@ -60,6 +65,7 @@ func (s *SSHServer) Start() error {
 	}
 }
 
+// handleConnection handles a new SSH connection
 func (s *SSHServer) handleConnection(conn net.Conn) {
 	defer conn.Close()
 
