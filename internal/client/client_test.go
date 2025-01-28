@@ -2,11 +2,19 @@ package client
 
 import (
 	"bytes"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
+	"fmt"
 	"io"
 	"net"
 	"net/http/httptest"
+	"os"
 	"testing"
 	"time"
+
+	"flyssh/server"
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/net/websocket"
@@ -131,3 +139,98 @@ func TestSSHOverCustomConn(t *testing.T) {
 		}
 	}
 }
+
+// TestSSHOverWebSocket verifies that SSH protocol works over WebSocket transport
+func TestSSHOverWebSocket(t *testing.T) {
+	// Generate SSH host key
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("Failed to generate host key: %v", err)
+	}
+
+	// Convert to PEM format
+	keyBytes := pem.EncodeToMemory(&pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(key),
+	})
+
+	// Set test auth token
+	const testToken = "test-token"
+	os.Setenv("WSS_AUTH_TOKEN", testToken)
+	defer os.Unsetenv("WSS_AUTH_TOKEN")
+
+	// Create WebSocket+SSH server with a high random port
+	const testPort = 35555
+	wsServer, err := server.NewWebSocketSSHServer(testPort, keyBytes)
+	if err != nil {
+		t.Fatalf("Failed to create WebSocket SSH server: %v", err)
+	}
+
+	// Start server in goroutine
+	go func() {
+		if err := wsServer.Start(); err != nil {
+			t.Errorf("Server failed: %v", err)
+		}
+	}()
+
+	// Wait a moment for server to start
+	time.Sleep(100 * time.Millisecond)
+
+	// Create client config
+	config := &ClientConfig{
+		WSServer:  fmt.Sprintf("ws://localhost:%d", testPort),
+		AuthToken: testToken,
+		Command:   "echo test", // Run a simple command in non-interactive mode
+	}
+
+	// Create and run client
+	client, err := NewClient(config)
+	if err != nil {
+		t.Fatalf("Failed to create client: %v", err)
+	}
+
+	// Run client in goroutine since it blocks
+	errChan := make(chan error, 1)
+	go func() {
+		errChan <- client.Run()
+	}()
+
+	// Wait for error or timeout
+	select {
+	case err := <-errChan:
+		if err != nil {
+			t.Fatalf("Client failed: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		// Success - connection stayed open
+	}
+}
+
+// Test SSH host key - DO NOT use in production!
+const testHostKey = `-----BEGIN OPENSSH PRIVATE KEY-----
+b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAABFwAAAAdzc2gtcn
+NhAAAAAwEAAQAAAQEAvRQk2oQqLB01iCnJuv0J6gEu3kDgzVXZZqyqp1qLJKPn+hYk800g
+5dZ6vNdZQ5xjvZMhAqyKWJJ8H9MJ/9oJDUfHq3mEJ9XjR7kDWc4FwIV9Y4RCQynwKGzKWP
+EMYyO9qjsT0yDhb5K+1/RlUq+2VB1OHf+42Zg8Lg/2jBgGFQfrDhVZEd4Kj0A+lvQMuqtm
+b2wqaZqGxn5TxJxRWCvO1GxqUO4CVwxQsAbRSFVsJh7KBKPYpvO6plvWjFMqC7FTLjLhJK
+PP3/1k+ihJRWFMA3BmR8GbwqaMpc8tqRvGz4Rp4e0UPckHY4oK/k5rRN8pnXGdgRzN5Rk+
+YQ2IqQAAA8g3ss0EN7LNBAAAAAdzc2gtcnNhAAABAQC9FCTahCosHTWIKcm6/QnqAS7eQO
+DNVdlmrKqnWoskoef6FiTzTSDl1nq811lDnGO9kyECrIpYknwf0wn/2gkNR8ereYQn1eNH
+uQNZzgXAhX1jhEJDKfAobMpY8QxjI72qOxPTIOFvkr7X9GVSr7ZUHU4d/7jZmDwuD/aMGA
+YVB+sOFVkR3gqPQD6W9Ay6q2ZvbCppmoZGflPEnFFYK87UbGpQ7gJXDFCwBtFIVWwmHsoE
+o9im87qmW9aMUyoLsVMuMuEko8/f/WT6KElFYUwDcGZHwZvCpoylzy2pG8bPhGnh7RQ9yQ
+djigr+TmtE3ymdcZ2BHM3lGT5hDYipAAAAAwEAAQAAAQEAnB+DGu3GLZwX4CxSh+dvYS6C
+JeXAFEu3kYwUzj5x5CyhtAUzuGQ2qw5eCQ6C9wGqK6PmNJKXlyPW2GHJwoYPR2hJvHgPLC
+QKnPQh6Qj5IwrWGUYhvU4yB5SHPdHNDwmECQLYqZw0Z0XlFFmz4hk4sSBX1oGF4FBQKFob
+qWzxYVk4SvC0TtHMjJGTJJsc4f1SizE6cVOd4IXRZ+4iQPQD1SiJYhEKqh3VH8yf8EhyDH
+/90pn4ZQ8wMD6BCRh1FGKHGym4r+hCjDr2y2gHbh+5WGwXBZHH4TNcl+kZGD0Y9qj2r6zR
+2eQUJ7oAD5AN4y6JQTKiAXeGd0wm7/5hAQAAAIBKqIWP0J1bvqJxUyiRrpuKs4qEyxau9G
+wQR4l3mX2ASrA80UgRkrnvRjImxTBhzS4NT4NOuNF5ZO8oVHvLXBHDDME2sAFkmLFxoFAg
+6hX3i0REGfN8YU/+ij0Zj6BWG/PVgbL9agfqHUDWjNhqQvXhwTN8KmoxGBAYQbdfHsqsAA
+AAAIEAyy2c3o0b4hdXYA0Y2JpJ4JhIQ9z7EhwR3wYC3/VhVy8oYUy9eRi9sBqNEAE+cAYt
+KX/gZVv6hZUhKw5tEFvJVJDGxoUFjtwOAgLnH3ENhiEXVUBQDQhs2S2CzQ7TDDm2447Gqz
+IvYXo8ZxoAL8dXFLCJn6Kh78IJuXtBWqsAAACBAO/zoZGRkBRZf5RYmn5HJmEPzZEQz5Wd
+hDUhUQKn/AAU3MpkGVZtXRTzRgkGQQRkEXr+PHVm/o3LAQGQwT5LXfPK+gzqC9D1mO6MPP
+RD4o4nZ/fZHvuEQOP8d0MfB6Gx0J7bpVy4LhqNzYyiDQf6ISf1NVRLhxpqB6bWNGAhAAAA
+EHRlc3RAZXhhbXBsZS5jb20BAg==
+-----END OPENSSH PRIVATE KEY-----`

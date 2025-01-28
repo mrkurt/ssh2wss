@@ -8,31 +8,38 @@ import (
 	"flyssh/internal/client"
 )
 
-func ExecCommand(args []string) error {
-	fs := flag.NewFlagSet("exec", flag.ExitOnError)
-	command := fs.String("c", "", "Command to execute")
-	fs.Parse(args)
+func ClientCommand(args []string) error {
+	fs := flag.NewFlagSet("client", flag.ExitOnError)
 
-	if *command == "" && fs.NArg() > 0 {
-		*command = fs.Arg(0)
+	// Command line flags
+	server := fs.String("s", os.Getenv("FLYSSH_SERVER"), "WebSocket server URL")
+	token := fs.String("t", os.Getenv("FLYSSH_AUTH_TOKEN"), "Auth token")
+	command := fs.String("f", "", "Command to execute (non-interactive mode)")
+
+	// Parse flags
+	if err := fs.Parse(args); err != nil {
+		return err
 	}
 
-	if *command == "" {
-		return fmt.Errorf("Usage: flyssh [-c] <command>\n   or: flyssh server [options]\n   or: flyssh proxy [options]\n   or: flyssh dev    # Run both server and proxy in development mode")
+	// Validate required flags
+	if *server == "" {
+		return fmt.Errorf("WebSocket server URL is required. Set FLYSSH_SERVER or use -s flag")
+	}
+	if *token == "" {
+		return fmt.Errorf("Auth token is required. Set FLYSSH_AUTH_TOKEN or use -t flag")
 	}
 
-	wsServer := os.Getenv("FLYSSH_SERVER")
-	authToken := os.Getenv("FLYSSH_AUTH_TOKEN")
-
+	// Create client config
 	config := &client.ClientConfig{
-		WSServer:  wsServer,
-		AuthToken: authToken,
+		WSServer:  *server,
+		AuthToken: *token,
 		Command:   *command,
 	}
 
+	// Create and run client
 	c, err := client.NewClient(config)
 	if err != nil {
-		return fmt.Errorf("failed to create client: %v", err)
+		return fmt.Errorf("failed to create client: %w", err)
 	}
 
 	return c.Run()

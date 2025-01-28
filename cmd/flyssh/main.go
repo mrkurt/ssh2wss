@@ -1,39 +1,48 @@
 package main
 
 import (
-	"log"
+	"fmt"
 	"os"
 
 	"flyssh/cmd/flyssh/commands"
 )
 
 func main() {
-	if len(os.Args) > 1 {
-		switch os.Args[1] {
-		case "server":
-			if err := commands.ServerCommand(os.Args[2:]); err != nil {
-				log.Fatal(err)
-			}
-		case "proxy":
-			if err := commands.ProxyCommand(os.Args[2:]); err != nil {
-				log.Fatal(err)
-			}
-		case "dev":
-			if err := commands.DevCommand(os.Args[2:]); err != nil {
-				log.Fatal(err)
-			}
-			return
-		default:
-			// Treat unknown commands as part of the command to execute
-			if err := commands.ExecCommand(os.Args[1:]); err != nil {
-				log.Fatal(err)
-			}
-		}
-		return
+	if err := run(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
+	if len(os.Args) < 2 {
+		// No command specified, use client mode with no args
+		return commands.ClientCommand([]string{})
 	}
 
-	// Default to exec command with no args
-	if err := commands.ExecCommand(nil); err != nil {
-		log.Fatal(err)
+	switch os.Args[1] {
+	case "server":
+		return commands.ServerCommand(os.Args[2:])
+	case "proxy":
+		return commands.ProxyCommand(os.Args[2:])
+	case "client":
+		return commands.ClientCommand(os.Args[2:])
+	case "dev":
+		return commands.DevCommand(os.Args[2:])
+	case "-h", "--help":
+		printUsage()
+		return nil
+	default:
+		// Unknown command, treat as client mode with all args
+		return commands.ClientCommand(os.Args[1:])
 	}
+}
+
+func printUsage() {
+	fmt.Println("Usage:")
+	fmt.Println("  flyssh [options]                      Connect to remote host via WebSocket")
+	fmt.Println("  flyssh server [options]               Run in server mode")
+	fmt.Println("  flyssh proxy [options]                Run in proxy mode")
+	fmt.Println("  flyssh dev                           Run both server and proxy in development mode")
+	fmt.Println("\nRun 'flyssh -h' for options")
 }

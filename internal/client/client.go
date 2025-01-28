@@ -65,7 +65,8 @@ func (c *Client) connectWebSocket() (*websocket.Conn, error) {
 
 	config := &websocket.Config{
 		Location: wsURL,
-		Origin:   &url.URL{Scheme: "http", Host: "localhost"},
+		Origin:   &url.URL{Scheme: wsURL.Scheme, Host: wsURL.Host},
+		Version:  websocket.ProtocolVersionHybi13,
 		Header: map[string][]string{
 			"Authorization": {fmt.Sprintf("Bearer %s", c.config.AuthToken)},
 		},
