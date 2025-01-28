@@ -1,4 +1,4 @@
-module ssh2wss
+module flyssh
 
 go 1.22.4
 
