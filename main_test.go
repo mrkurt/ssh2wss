@@ -137,13 +137,7 @@ func TestBridge(t *testing.T) {
 					}
 					defer ws.Close()
 
-					// Test echo command
-					testMsg := "test message"
-					if _, err := ws.Write([]byte("echo " + testMsg)); err != nil {
-						t.Errorf("Failed to write to WebSocket: %v", err)
-						return
-					}
-
+					// Test SSH protocol handshake
 					var response = make([]byte, 1024)
 					n, err := ws.Read(response)
 					if err != nil {
@@ -151,8 +145,9 @@ func TestBridge(t *testing.T) {
 						return
 					}
 
-					if !strings.Contains(string(response[:n]), testMsg) {
-						t.Errorf("Expected response to contain %q, got %q", testMsg, string(response[:n]))
+					expectedPrefix := "SSH-2.0-"
+					if !strings.HasPrefix(string(response[:n]), expectedPrefix) {
+						t.Errorf("Expected response to start with %q, got %q", expectedPrefix, string(response[:n]))
 					}
 				} else {
 					if err == nil {

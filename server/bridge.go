@@ -19,6 +19,7 @@ func NewBridge(sshPort, wsPort int, hostKey []byte) (*Bridge, error) {
 	}
 
 	wsServer := NewWebSocketServer(wsPort)
+	wsServer.SetSSHServer(sshServer)
 
 	return &Bridge{
 		sshServer: sshServer,
