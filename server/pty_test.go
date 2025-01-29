@@ -49,14 +49,14 @@ func TestPTYRequest(t *testing.T) {
 	}
 
 	// Read response
-	buf := make([]byte, len(testStr))
+	buf := make([]byte, len(testStr)+1) // +1 for \r
 	n, err := stdout.Read(buf)
 	if err != nil && err != io.EOF {
 		t.Fatalf("Failed to read from stdout: %v", err)
 	}
 
-	if string(buf[:n]) != testStr {
-		t.Errorf("Expected echo %q, got %q", testStr, string(buf[:n]))
+	if string(buf[:n]) != "test\r\n" {
+		t.Errorf("Expected echo %q, got %q", "test\r\n", string(buf[:n]))
 	}
 }
 
