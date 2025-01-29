@@ -1,180 +1,215 @@
-# SSH over WebSocket CLI
+# flyssh: SSH over WebSocket
 
-A command-line tool that lets you SSH into remote machines through WebSocket connections, enabling SSH access through environments where traditional SSH ports are blocked or unavailable. The tool includes both client and server components, with the server being a lightweight component that enables the WebSocket transport.
+A lightweight, secure command-line tool that tunnels SSH connections through WebSocket, enabling SSH access in environments where traditional SSH ports (22) are blocked or unavailable. Perfect for cloud environments, corporate networks, and other restricted environments.
 
-## Features
+## Key Features
 
-- SSH through WebSocket transport (works where traditional SSH ports are blocked)
-- Full terminal support with all the features you expect from SSH:
-  * Interactive shell with PTY support
-  * Window resizing
+### Core Functionality
+- **SSH over WebSocket**: Tunnels SSH traffic through WebSocket connections (port 80/443)
+- **Token Authentication**: Simple, secure token-based authentication for WebSocket connections
+- **End-to-End Encryption**: All traffic is encrypted using SSH protocol
+- **Cross-Platform**: Works on Linux, macOS, and other Unix-like systems
+
+### Terminal Support
+- **Full PTY Support**: Complete terminal emulation with all features:
+  * Window resizing (automatic detection)
+  * ANSI/Color support
   * Environment variables
-  * Non-interactive command execution
-  * Uses your default shell (zsh, bash, etc.)
-- Simple token-based authentication
-- Secure communication with SSH encryption
-- Cross-platform support
+  * Control sequences
+- **Shell Compatibility**: Works with your default shell (bash, zsh, etc.)
+- **Interactive & Non-Interactive**: Supports both interactive sessions and one-off commands
 
-## Usage
+### Security Features
+- **Token-Based Auth**: Simple but secure authentication for WebSocket connections
+- **SSH Encryption**: All traffic is encrypted using standard SSH protocols
+- **Automatic Key Management**: Host keys are automatically generated and managed
+- **No Root Required**: Runs entirely in user space, no system modifications needed
 
-### Client Mode
+## Quick Start
 
-Connect to a remote machine through WebSocket:
-
-```bash
-# Set the authentication token provided by the server
-export WSS_AUTH_TOKEN=server-token
-
-# Start an interactive session
-flyssh client ws://server-address:8081
-
-# Or run a specific command
-flyssh client ws://server-address:8081 -- ls -la
-```
-
-Client options:
-- `--term`: Terminal type (default: xterm)
-- `--cols`: Terminal width (auto-detected by default)
-- `--rows`: Terminal height (auto-detected by default)
-
-### Server Mode
-
-The server component needs to be running on the remote machine you want to connect to. It's typically set up once and left running:
+### Installation
 
 ```bash
-# Generate an authentication token (save this for client use)
-flyssh auth generate-token
+# Using Go (1.22 or later)
+go install github.com/superfly/flyssh/cmd/flyssh@latest
 
-# Start the server
-export WSS_AUTH_TOKEN=your-generated-token
-flyssh server
-```
-
-Server options:
-- `--ws-port`: WebSocket port (default: 8081)
-- `--host`: Host to bind to (default: localhost)
-
-## Architecture
-
-```mermaid
-graph TB
-    subgraph "🖥️ Local Machine"
-        CLI["🐬 flyssh client"]
-        PTY["📺 PTY/Terminal"]
-        WSC["📡 WebSocket Client"]
-        
-        CLI --> |"Start Session"| PTY
-        PTY --> |"Terminal I/O"| WSC
-        WSC --> |"SSH over WS"| Internet
-    end
-
-    subgraph "☁️ Network"
-        Internet["🌐 Encrypted Transport"]
-    end
-
-    subgraph "🖧 Remote Server"
-        WSS["📡 WebSocket Server"]
-        Auth["🔐 Token Auth"]
-        SSH["🔒 SSH Server"]
-        Shell["🐚 Shell"]
-        
-        Internet --> |"Packets"| WSS
-        WSS --> |"Validate"| Auth
-        WSS --> |"Process"| SSH
-        SSH --> |"Execute"| Shell
-    end
-
-    classDef default fill:#f9f9f9,stroke:#333,stroke-width:2px;
-    classDef highlight fill:#f0f7ff,stroke:#0366d6,stroke-width:2px;
-    classDef transport fill:#fff5f5,stroke:#d73a49,stroke-width:2px;
-    
-    class CLI,Shell highlight;
-    class Internet,WSC,WSS transport;
-```
-
-Flow sequence:
-1. Client initiates a session with terminal handling
-2. Terminal I/O is managed by the PTY subsystem
-3. All data is wrapped in SSH protocol and sent over WebSocket
-4. Encrypted packets traverse the network
-5. Server validates the WebSocket connection using token auth
-6. SSH protocol is processed by the SSH server
-7. Commands are executed in a shell with full TTY support
-
-All SSH protocol handling (encryption, authentication, channel management) happens within the client and server components, while WebSocket provides the transport layer.
-
-## Security
-
-- WebSocket server requires Bearer token authentication
-- All communication is encrypted using SSH protocol
-- Host keys are automatically generated and managed
-- No need to modify system SSH configuration
-
-## Development Setup
-
-1. Clone the repository:
-```bash
+# Or build from source
 git clone https://github.com/superfly/flyssh.git
 cd flyssh
-```
-
-2. Install Go (1.21 or later)
-
-3. Build the tool:
-```bash
 go build -o flyssh ./cmd/flyssh
 ```
 
-4. Run tests:
+### Basic Usage
+
+1. Start the server:
 ```bash
+# Generate a secure token
+export WSS_AUTH_TOKEN=$(openssl rand -hex 16)
+echo "Your auth token: $WSS_AUTH_TOKEN"
+
+# Start the server
+flyssh server
+```
+
+2. Connect from a client:
+```bash
+# Use the same token from the server
+export WSS_AUTH_TOKEN=<token-from-server>
+
+# Start an interactive session
+flyssh client ws://server:8081
+
+# Or run a single command
+flyssh client ws://server:8081 -- uptime
+```
+
+## Detailed Usage
+
+### Server Mode
+
+The server component runs on the machine you want to access:
+
+```bash
+# Basic server with default settings
+flyssh server
+
+# Custom port and development mode
+flyssh server -port 8082 -dev
+
+# With debug logging
+WSS_DEBUG=1 flyssh server
+```
+
+Server Options:
+- `-port`: WebSocket port (default: 8081)
+- `-dev`: Enable development mode with auto-generated token
+- Environment Variables:
+  * `WSS_AUTH_TOKEN`: Required authentication token
+  * `WSS_DEBUG`: Enable debug logging
+  * `SHELL`: Shell to use for sessions (default: system shell)
+
+### Client Mode
+
+The client connects to a running server:
+
+```bash
+# Interactive session
+flyssh client -url ws://server:8081
+
+# Run command and exit
+flyssh client -url ws://server:8081 -- ls -la
+
+# With custom token
+flyssh client -url ws://server:8081 -token your-auth-token
+```
+
+Client Options:
+- `-url`: WebSocket server URL (required)
+- `-token`: Auth token (can also use WSS_AUTH_TOKEN env var)
+- Environment Variables:
+  * `WSS_AUTH_TOKEN`: Authentication token
+  * `WSS_DEBUG`: Enable debug logging
+
+## Architecture
+
+The system uses a layered approach for security and compatibility:
+
+1. **Transport Layer** (WebSocket)
+   - Provides connectivity through standard web ports
+   - Handles proxies and firewalls
+   - Maintains persistent connections
+
+2. **Security Layer** (Token Auth + SSH)
+   - Token authentication for WebSocket connections
+   - SSH protocol for end-to-end encryption
+   - Automatic key management
+
+3. **Terminal Layer** (PTY)
+   - Full terminal emulation
+   - Window size management
+   - Signal handling
+   - Shell session management
+
+## Development
+
+### Requirements
+- Go 1.22 or later
+- Unix-like system (Linux, macOS, etc.)
+
+### Building
+```bash
+# Get dependencies
+go mod download
+
+# Build binary
+go build -o flyssh ./cmd/flyssh
+
+# Run tests
 go test -v ./...
 ```
 
-## Examples
-
-1. Start a server and connect from another terminal:
+### Running Tests
 ```bash
-# Terminal 1: Start server
-export WSS_AUTH_TOKEN=secret-token
-flyssh server
+# Run all tests
+go test -v ./...
 
-# Terminal 2: Connect client
-export WSS_AUTH_TOKEN=secret-token
-flyssh client ws://localhost:8081
-```
+# Run specific test
+go test -v ./tests -run TestClientBinary
 
-2. Run a remote command:
-```bash
-flyssh client ws://server:8081 -- uname -a
-```
-
-3. Start server on custom ports:
-```bash
-flyssh server --ssh-port 2223 --ws-port 8082
+# With debug output
+WSS_DEBUG=1 go test -v ./...
 ```
 
 ## Troubleshooting
 
-Common issues and solutions:
+### Common Issues
 
-1. Authentication errors:
+1. Connection Refused
 ```bash
-# Verify token is set
+# Check server is running
+ps aux | grep flyssh
+
+# Verify port is open
+nc -zv server 8081
+```
+
+2. Authentication Failed
+```bash
+# Check token is set
 echo $WSS_AUTH_TOKEN
 
-# Generate new token
-flyssh auth generate-token
+# Verify token matches server
+# Server logs will show auth failures
 ```
 
-2. Connection issues:
+3. Terminal Issues
 ```bash
-# Enable debug logging
-flyssh server --debug
-flyssh client --debug ws://server:8081
+# Reset terminal if it gets corrupted
+reset
+
+# Check terminal settings
+stty -a
 ```
 
-3. Port conflicts:
+### Debug Mode
+
+Enable debug logging for more information:
 ```bash
-# Use different ports
-flyssh server --ssh-port 2223 --ws-port 8082
+# Server debug mode
+WSS_DEBUG=1 flyssh server
+
+# Client debug mode
+WSS_DEBUG=1 flyssh client -url ws://server:8081
 ```
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Add tests for new functionality
+5. Submit a pull request
+
+## License
+
+MIT License - see LICENSE file for details
