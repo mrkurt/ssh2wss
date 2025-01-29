@@ -1,48 +1,56 @@
 package main
 
 import (
+	"flag"
 	"fmt"
+	"log"
 	"os"
 
-	"flyssh/cmd/flyssh/commands"
+	"flyssh/core"
 )
 
 func main() {
-	if err := run(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-}
-
-func run() error {
 	if len(os.Args) < 2 {
-		// No command specified, use client mode with no args
-		return commands.ClientCommand([]string{})
+		fmt.Println("Usage:")
+		fmt.Println("  flyssh server [-port PORT]")
+		fmt.Println("  flyssh client -url WS_URL")
+		os.Exit(1)
 	}
 
 	switch os.Args[1] {
 	case "server":
-		return commands.ServerCommand(os.Args[2:])
-	case "proxy":
-		return commands.ProxyCommand(os.Args[2:])
-	case "client":
-		return commands.ClientCommand(os.Args[2:])
-	case "dev":
-		return commands.DevCommand(os.Args[2:])
-	case "-h", "--help":
-		printUsage()
-		return nil
-	default:
-		// Unknown command, treat as client mode with all args
-		return commands.ClientCommand(os.Args[1:])
-	}
-}
+		// Parse server flags
+		cmd := flag.NewFlagSet("server", flag.ExitOnError)
+		port := cmd.Int("port", 8081, "Port to listen on")
+		cmd.Parse(os.Args[2:])
 
-func printUsage() {
-	fmt.Println("Usage:")
-	fmt.Println("  flyssh [options]                      Connect to remote host via WebSocket")
-	fmt.Println("  flyssh server [options]               Run in server mode")
-	fmt.Println("  flyssh proxy [options]                Run in proxy mode")
-	fmt.Println("  flyssh dev                           Run both server and proxy in development mode")
-	fmt.Println("\nRun 'flyssh -h' for options")
+		// Start server
+		s := core.NewServer(*port)
+		log.Printf("Starting WebSocket server on :%d", *port)
+		if err := s.Start(); err != nil {
+			log.Fatalf("Server error: %v", err)
+		}
+
+	case "client":
+		// Parse client flags
+		cmd := flag.NewFlagSet("client", flag.ExitOnError)
+		url := cmd.String("url", "", "WebSocket URL to connect to (e.g. ws://localhost:8081)")
+		cmd.Parse(os.Args[2:])
+
+		if *url == "" {
+			fmt.Println("Error: -url is required")
+			cmd.PrintDefaults()
+			os.Exit(1)
+		}
+
+		// Start client
+		c := core.NewClient(*url, os.Getenv("WSS_AUTH_TOKEN"))
+		if err := c.Connect(); err != nil {
+			log.Fatalf("Client error: %v", err)
+		}
+
+	default:
+		fmt.Printf("Unknown command: %s\n", os.Args[1])
+		os.Exit(1)
+	}
 }

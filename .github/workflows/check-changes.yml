@@ -22,12 +22,17 @@ jobs:
         with:
           fetch-depth: 0  # Fetch all history and tags
 
+      - id: setup-deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
       - id: check
         run: |
-          if ./scripts/check-changes; then
+          if ./.github/workflows/scripts/check-changes; then
             echo "has_changes=true" >> $GITHUB_OUTPUT
             echo "release_notes<<EOF" >> $GITHUB_OUTPUT
-            ./scripts/check-changes --notes >> $GITHUB_OUTPUT
+            ./.github/workflows/scripts/check-changes --notes >> $GITHUB_OUTPUT
             echo "EOF" >> $GITHUB_OUTPUT
           else
             echo "has_changes=false" >> $GITHUB_OUTPUT
