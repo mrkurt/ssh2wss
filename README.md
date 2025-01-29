@@ -63,9 +63,9 @@ graph TB
         PTY["📺 PTY/Terminal"]
         WSC["📡 WebSocket Client"]
         
-        CLI --> |"1. Start Session"| PTY
-        PTY --> |"2. Terminal I/O"| WSC
-        WSC --> |"3. SSH over WS"| Internet
+        CLI --> |"Start Session"| PTY
+        PTY --> |"Terminal I/O"| WSC
+        WSC --> |"SSH over WS"| Internet
     end
 
     subgraph "☁️ Network"
@@ -78,10 +78,10 @@ graph TB
         SSH["🔒 SSH Server"]
         Shell["🐚 Shell"]
         
-        Internet --> |"4. Packets"| WSS
-        WSS --> |"5. Auth"| Auth
-        WSS --> |"6. SSH"| SSH
-        SSH --> |"7. Run"| Shell
+        Internet --> |"Packets"| WSS
+        WSS --> |"Validate"| Auth
+        WSS --> |"Process"| SSH
+        SSH --> |"Execute"| Shell
     end
 
     classDef default fill:#f9f9f9,stroke:#333,stroke-width:2px;
@@ -92,7 +92,7 @@ graph TB
     class Internet,WSC,WSS transport;
 ```
 
-The diagram shows the complete flow:
+Flow sequence:
 1. Client initiates a session with terminal handling
 2. Terminal I/O is managed by the PTY subsystem
 3. All data is wrapped in SSH protocol and sent over WebSocket
