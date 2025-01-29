@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"flyssh/core/client"
+	"flyssh/core"
 )
 
 func ClientCommand(args []string) error {
@@ -29,6 +29,6 @@ func ClientCommand(args []string) error {
 	}
 
 	// Create and start client
-	c := client.New(*url, *token)
+	c := core.NewClient(*url, *token)
 	return c.Connect()
 }

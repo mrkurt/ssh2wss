@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"flyssh/core/server"
+	"flyssh/core"
 )
 
 func ServerCommand(args []string) error {
@@ -16,7 +16,7 @@ func ServerCommand(args []string) error {
 
 	// In dev mode, generate a token and set it in the environment
 	if *devMode {
-		token := server.GenerateDevToken()
+		token := core.GenerateDevToken()
 		os.Setenv("WSS_AUTH_TOKEN", token)
 		fmt.Printf("\n=== Development Mode ===\n")
 		fmt.Printf("WebSocket URL: ws://localhost:%d\n", *port)
@@ -25,7 +25,7 @@ func ServerCommand(args []string) error {
 	}
 
 	// Create and start server
-	s := server.New(*port)
+	s := core.NewServer(*port)
 	return s.Start()
 }
 
