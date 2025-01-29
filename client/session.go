@@ -32,9 +32,10 @@ type Session struct {
 	height   int
 	modes    ssh.TerminalModes
 
-	// Cleanup
-	done    chan struct{}
-	cleanup []func() error
+	// Cleanup and control
+	done       chan struct{}
+	cleanup    []func() error
+	resizeChan chan struct{} // Serialize resize events
 }
 
 // NewSession creates a Session ready for interactive use
@@ -45,13 +46,14 @@ func NewSession(conn sshClientInterface) (*Session, error) {
 	}
 
 	s := &Session{
-		conn:     conn,
-		session:  session,
-		stdin:    os.Stdin,
-		stdout:   os.Stdout,
-		done:     make(chan struct{}),
-		cleanup:  make([]func() error, 0),
-		termType: os.Getenv("TERM"),
+		conn:       conn,
+		session:    session,
+		stdin:      os.Stdin,
+		stdout:     os.Stdout,
+		done:       make(chan struct{}),
+		cleanup:    make([]func() error, 0),
+		termType:   os.Getenv("TERM"),
+		resizeChan: make(chan struct{}, 1), // Buffer one resize event
 	}
 
 	// Add session cleanup to the list
@@ -129,12 +131,16 @@ func (s *Session) setupTerminal() error {
 	s.width = width
 	s.height = height
 
-	// Set basic terminal modes
+	// Set essential terminal modes for interactive use
 	s.modes = ssh.TerminalModes{
-		ssh.ECHO:          1,
-		ssh.TTY_OP_ISPEED: 14400,
-		ssh.TTY_OP_OSPEED: 14400,
+		ssh.ECHO:   1, // Display what we type
+		ssh.ISIG:   1, // Enable signals (Ctrl+C, etc)
+		ssh.ICANON: 1, // Enable line editing (arrows, etc)
+		ssh.ICRNL:  1, // Map CR to NL on input
 	}
+
+	// Start resize handler immediately after raw mode
+	go s.resizeHandler()
 
 	return nil
 }
@@ -142,7 +148,12 @@ func (s *Session) setupTerminal() error {
 // setupSignals configures signal handling for the session
 func (s *Session) setupSignals() error {
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGINT, syscall.SIGWINCH)
+	signal.Notify(sigChan,
+		syscall.SIGWINCH, // Window size changes
+		syscall.SIGTERM,  // Termination
+		syscall.SIGINT,   // Interrupt (Ctrl+C)
+		syscall.SIGQUIT,  // Quit (Ctrl+\)
+	)
 
 	go func() {
 		for {
@@ -150,8 +161,23 @@ func (s *Session) setupSignals() error {
 			case sig := <-sigChan:
 				switch sig {
 				case syscall.SIGWINCH:
-					s.handleResize()
-				case syscall.SIGTERM, syscall.SIGINT:
+					// Trigger resize without blocking
+					select {
+					case s.resizeChan <- struct{}{}:
+					default:
+						// Resize already pending
+					}
+
+				case syscall.SIGINT:
+					// Forward interrupt
+					s.forwardSignal(ssh.SIGINT)
+
+				case syscall.SIGQUIT:
+					// Forward quit
+					s.forwardSignal(ssh.SIGQUIT)
+
+				case syscall.SIGTERM:
+					// Clean shutdown
 					s.Close()
 					return
 				}
@@ -162,6 +188,27 @@ func (s *Session) setupSignals() error {
 	}()
 
 	return nil
+}
+
+// forwardSignal sends a signal to the remote process and handles errors
+func (s *Session) forwardSignal(sig ssh.Signal) {
+	if err := s.session.Signal(sig); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to send signal %v: %v\n", sig, err)
+	}
+}
+
+// resizeHandler processes window resize events serially
+func (s *Session) resizeHandler() {
+	for {
+		select {
+		case <-s.resizeChan:
+			if err := s.handleResize(); err != nil {
+				fmt.Fprintf(os.Stderr, "resize error: %v\n", err)
+			}
+		case <-s.done:
+			return
+		}
+	}
 }
 
 // handleResize updates terminal dimensions when the window size changes
