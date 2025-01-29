@@ -22,15 +22,18 @@ jobs:
         with:
           fetch-depth: 0  # Fetch all history and tags
 
+      - id: install-deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zsh
+
       - id: setup-deno
         uses: denoland/setup-deno@v1
         with:
           deno-version: v1.x
 
       - id: test
-        run: |
-          cd .github/workflows/scripts
-          ./check-changes_test.ts
+        run: ./.github/workflows/scripts/check-changes_test.ts
 
       - id: check
         run: |
