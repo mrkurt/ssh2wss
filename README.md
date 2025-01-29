@@ -59,36 +59,37 @@ Server options:
 ```mermaid
 graph TB
     subgraph "🖥️ Local Machine"
-        CLI[("🐬 flyssh client")]
-        PTY["📺 PTY/Terminal\nHandling"]
-        WSC["📡 WebSocket\nClient"]
+        CLI["🐬 flyssh client"]
+        PTY["📺 PTY/Terminal"]
+        WSC["📡 WebSocket Client"]
         
-        CLI --> |"1. Start\nSession"| PTY
-        PTY --> |"2. Terminal\nI/O"| WSC
-        WSC --> |"3. SSH over\nWebSocket"| Internet
+        CLI --> |"1. Start Session"| PTY
+        PTY --> |"2. Terminal I/O"| WSC
+        WSC --> |"3. SSH over WS"| Internet
     end
 
-    subgraph "☁️ Internet"
-        Internet[("🌐 Encrypted\nTransport")]
+    subgraph "☁️ Network"
+        Internet["🌐 Encrypted Transport"]
     end
 
     subgraph "🖧 Remote Server"
-        WSS["📡 WebSocket\nServer"]
+        WSS["📡 WebSocket Server"]
         Auth["🔐 Token Auth"]
         SSH["🔒 SSH Server"]
-        Shell["🐚 Shell/Commands"]
+        Shell["🐚 Shell"]
         
-        Internet --> |"4. Encrypted\nPackets"| WSS
-        WSS --> |"5. Validate"| Auth
-        WSS --> |"6. SSH\nProtocol"| SSH
-        SSH --> |"7. Execute"| Shell
+        Internet --> |"4. Packets"| WSS
+        WSS --> |"5. Auth"| Auth
+        WSS --> |"6. SSH"| SSH
+        SSH --> |"7. Run"| Shell
     end
 
-    style Internet fill:#f5f5f5,stroke:#666,stroke-width:2px
-    style WSS fill:#e1f5fe,stroke:#0288d1
-    style SSH fill:#e8f5e9,stroke:#388e3c
-    style CLI fill:#fff3e0,stroke:#ef6c00
-    style Shell fill:#fce4ec,stroke:#c2185b
+    classDef default fill:#f9f9f9,stroke:#333,stroke-width:2px;
+    classDef highlight fill:#f0f7ff,stroke:#0366d6,stroke-width:2px;
+    classDef transport fill:#fff5f5,stroke:#d73a49,stroke-width:2px;
+    
+    class CLI,Shell highlight;
+    class Internet,WSC,WSS transport;
 ```
 
 The diagram shows the complete flow:
