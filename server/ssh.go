@@ -23,15 +23,15 @@ type SSHServer struct {
 
 // NewSSHServer creates a new SSH server with the given host key
 func NewSSHServer(port int, hostKey []byte) (*SSHServer, error) {
-	signer, err := ssh.ParsePrivateKey(hostKey)
+	auth, err := NewDefaultAuthConfig(hostKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse host key: %v", err)
+		return nil, fmt.Errorf("failed to create auth config: %w", err)
 	}
 
-	config := &ssh.ServerConfig{
-		NoClientAuth: true,
+	config, err := auth.ToServerConfig()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create server config: %w", err)
 	}
-	config.AddHostKey(signer)
 
 	return &SSHServer{
 		port:      port,
@@ -41,9 +41,8 @@ func NewSSHServer(port int, hostKey []byte) (*SSHServer, error) {
 
 // Start starts the SSH server
 func (s *SSHServer) Start() error {
-	// If port is 0, don't start listening - this server will only handle passed connections
 	if s.port == 0 {
-		return nil
+		return nil // Server will only handle passed connections
 	}
 
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", s.port))
@@ -61,19 +60,18 @@ func (s *SSHServer) Start() error {
 			continue
 		}
 
-		go s.handleConnection(conn)
+		go s.HandleConnection(conn)
 	}
 }
 
-// handleConnection handles a new SSH connection
-func (s *SSHServer) handleConnection(conn net.Conn) {
+// HandleConnection handles a single SSH connection
+func (s *SSHServer) HandleConnection(conn net.Conn) error {
 	defer conn.Close()
 
 	// Perform SSH handshake
 	sshConn, chans, reqs, err := ssh.NewServerConn(conn, s.sshConfig)
 	if err != nil {
-		log.Printf("Failed SSH handshake: %v", err)
-		return
+		return fmt.Errorf("failed SSH handshake: %w", err)
 	}
 	defer sshConn.Close()
 
@@ -82,7 +80,7 @@ func (s *SSHServer) handleConnection(conn net.Conn) {
 	// Handle incoming requests
 	go ssh.DiscardRequests(reqs)
 
-	// Service the incoming channel
+	// Service the incoming channels
 	for newChannel := range chans {
 		if newChannel.ChannelType() != "session" {
 			newChannel.Reject(ssh.UnknownChannelType, "unknown channel type")
@@ -95,8 +93,23 @@ func (s *SSHServer) handleConnection(conn net.Conn) {
 			continue
 		}
 
-		// Handle channel requests
-		go s.handleChannelRequests(channel, requests)
+		// Create and handle session
+		session := NewSession(channel)
+		go handleRequests(session, requests)
+	}
+
+	return nil
+}
+
+// handleRequests processes requests for a session
+func handleRequests(session *Session, requests <-chan *ssh.Request) {
+	defer session.Close()
+
+	for req := range requests {
+		if err := session.handleRequest(req); err != nil {
+			log.Printf("Failed to handle request: %v", err)
+			return
+		}
 	}
 }
 
@@ -179,7 +192,7 @@ func (s *SSHServer) handleChannelRequests(channel ssh.Channel, requests <-chan *
 				cmd = exec.Command(shell, getShellArgs(true)...)
 			}
 			log.Printf("Starting shell (%s) with PTY: %v", shell, ptyReq)
-			s.handleShell(channel, cmd)
+			s.handleShell(channel, ptyReq)
 			return
 
 		case "exec":
@@ -197,7 +210,7 @@ func (s *SSHServer) handleChannelRequests(channel ssh.Channel, requests <-chan *
 			if req.WantReply {
 				req.Reply(true, nil)
 			}
-			s.handleShell(channel, cmd)
+			s.handleShell(channel, false)
 			return
 
 		case "window-change":
@@ -224,52 +237,64 @@ func (s *SSHServer) handleChannelRequests(channel ssh.Channel, requests <-chan *
 	}
 }
 
-func (s *SSHServer) handleShell(channel ssh.Channel, cmd *exec.Cmd) {
-	log.Printf("Starting shell handler")
-
+// handleShell handles a shell request
+func (s *SSHServer) handleShell(channel ssh.Channel, ptyReq bool) error {
+	shell := getDefaultShell()
+	var cmd *exec.Cmd
 	var stdin io.WriteCloser
 	var stdout, stderr io.ReadCloser
 	var err error
 
-	// Set up platform-specific process attributes (non-PTY mode)
-	setupProcessAttributes(cmd, false)
+	if ptyReq {
+		cmd = exec.Command(shell)
+		cmd.Env = append(os.Environ(), "TERM=xterm")
 
-	// Only create pipes if they haven't been set
-	if cmd.Stdin == nil {
-		stdin, err = cmd.StdinPipe()
+		// Set up process attributes before starting PTY
+		setupProcessAttributes(cmd, true)
+
+		// Create PTY
+		ptmx, err := pty.Start(cmd)
 		if err != nil {
-			log.Printf("Failed to create stdin pipe: %v", err)
-			channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{1}))
-			return
+			log.Printf("Failed to start command with PTY: %v", err)
+			return err
 		}
-	}
-	if cmd.Stdout == nil {
-		stdout, err = cmd.StdoutPipe()
-		if err != nil {
-			log.Printf("Failed to create stdout pipe: %v", err)
-			channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{1}))
-			return
-		}
-	}
-	if cmd.Stderr == nil {
-		stderr, err = cmd.StderrPipe()
-		if err != nil {
-			log.Printf("Failed to create stderr pipe: %v", err)
-			channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{1}))
-			return
-		}
+		defer ptmx.Close()
+
+		// Copy PTY input/output
+		go func() {
+			io.Copy(ptmx, channel)
+		}()
+		go func() {
+			io.Copy(channel, ptmx)
+		}()
+
+		return cmd.Wait()
 	}
 
-	// Start the command
+	// Non-PTY session
+	cmd = exec.Command(shell)
+	stdin, err = cmd.StdinPipe()
+	if err != nil {
+		return fmt.Errorf("failed to create stdin pipe: %w", err)
+	}
+
+	stdout, err = cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("failed to create stdout pipe: %w", err)
+	}
+
+	stderr, err = cmd.StderrPipe()
+	if err != nil {
+		return fmt.Errorf("failed to create stderr pipe: %w", err)
+	}
+
 	if err := cmd.Start(); err != nil {
-		log.Printf("Failed to start command: %v", err)
-		channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{1}))
-		return
+		return fmt.Errorf("failed to start command: %w", err)
 	}
 
 	// Copy data between pipes and SSH channel
 	var wg sync.WaitGroup
-	wg.Add(3) // Changed from 2 to 3 to include stderr
+	wg.Add(3)
 
 	go func() {
 		defer wg.Done()
@@ -287,50 +312,8 @@ func (s *SSHServer) handleShell(channel ssh.Channel, cmd *exec.Cmd) {
 		io.Copy(channel.Stderr(), stderr)
 	}()
 
-	// Wait for command to finish
-	err = cmd.Wait()
-	log.Printf("Command finished, checking exit status")
-
-	var exitCode uint32
-	if err != nil {
-		log.Printf("Command returned error: %v", err)
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			code, ok := getExitStatus(exitErr)
-			if ok {
-				exitCode = code
-				log.Printf("Got exit code from error: %d", exitCode)
-			} else {
-				exitCode = 1
-				log.Printf("Could not get exit code from error, using: %d", exitCode)
-			}
-		} else {
-			exitCode = 1
-			log.Printf("Non-exit error occurred, using exit code: %d", exitCode)
-		}
-	} else {
-		// Try to get exit code from shell if available
-		if shell, ok := cmd.Stdin.(interface{ GetExitCode() (uint32, error) }); ok {
-			if code, err := shell.GetExitCode(); err == nil {
-				exitCode = code
-				log.Printf("Got exit code from shell: %d", exitCode)
-			} else {
-				exitCode = uint32(cmd.ProcessState.ExitCode())
-				log.Printf("Using ProcessState exit code: %d", exitCode)
-			}
-		} else {
-			exitCode = uint32(cmd.ProcessState.ExitCode())
-			log.Printf("Using ProcessState exit code: %d", exitCode)
-		}
-	}
-
-	// Send the exit status
-	log.Printf("Sending exit status: %d", exitCode)
-	channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{exitCode}))
-
-	// Wait for all goroutines to finish
+	// Wait for I/O to complete
 	wg.Wait()
 
-	// Close the channel to ensure clean shutdown
-	channel.Close()
-	log.Printf("Shell handler completed")
+	return cmd.Wait()
 }

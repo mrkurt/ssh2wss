@@ -5,37 +5,34 @@ import (
 	"log"
 )
 
-// Bridge ties together the SSH and WebSocket servers
+// Bridge connects WebSocket and SSH servers
 type Bridge struct {
-	sshServer *SSHServer
 	wsServer  *WebSocketServer
+	sshServer *SSHServer
 }
 
-// NewBridge creates a new bridge with the given ports and host key
-func NewBridge(sshPort, wsPort int, hostKey []byte) (*Bridge, error) {
-	sshServer, err := NewSSHServer(sshPort, hostKey)
+// NewBridge creates a new bridge between WebSocket and SSH servers
+func NewBridge(sshServer *SSHServer, wsAddr string) (*Bridge, error) {
+	wsServer, err := NewWebSocketServer(sshServer, wsAddr)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create SSH server: %v", err)
+		return nil, fmt.Errorf("failed to create WebSocket server: %w", err)
 	}
 
-	wsServer := NewWebSocketServer(wsPort)
-	wsServer.SetSSHServer(sshServer)
-
 	return &Bridge{
-		sshServer: sshServer,
 		wsServer:  wsServer,
+		sshServer: sshServer,
 	}, nil
 }
 
-// Start starts both the SSH and WebSocket servers
+// Start starts both servers
 func (b *Bridge) Start() error {
-	// Start WebSocket server in a goroutine
+	// Start SSH server in a goroutine
 	go func() {
-		if err := b.wsServer.Start(); err != nil {
-			log.Printf("WebSocket server failed: %v", err)
+		if err := b.sshServer.Start(); err != nil {
+			log.Printf("SSH server error: %v", err)
 		}
 	}()
 
-	// Start SSH server (blocking)
-	return b.sshServer.Start()
+	// Start WebSocket server in the main goroutine
+	return b.wsServer.Start()
 }

@@ -3,105 +3,189 @@ package client
 import (
 	"fmt"
 	"io"
+	"log"
+	"net/url"
+	"os"
+	"os/signal"
+	"syscall"
 
-	"golang.org/x/crypto/ssh"
+	"golang.org/x/net/websocket"
+	"golang.org/x/term"
 )
 
-// Client represents an SSH client connection
+// Client represents a WebSocket client that connects to a terminal server
 type Client struct {
-	client *ssh.Client
+	url       string
+	authToken string
+	stdin     io.Reader
+	stdout    io.Writer
+	oldState  *term.State
 }
 
-// Connect creates a new SSH client connection
-func Connect(addr string, config *ssh.ClientConfig) (*Client, error) {
-	client, err := ssh.Dial("tcp", addr, config)
+// Message represents a WebSocket message
+type Message struct {
+	Type string      `json:"type"`
+	Data interface{} `json:"data"`
+}
+
+// WindowSize represents a terminal window size message
+type WindowSize struct {
+	Rows uint16 `json:"rows"`
+	Cols uint16 `json:"cols"`
+}
+
+// New creates a new Client instance
+func New(url, authToken string) *Client {
+	return &Client{
+		url:       url,
+		authToken: authToken,
+		stdin:     os.Stdin,
+		stdout:    os.Stdout,
+	}
+}
+
+// SetIO sets custom IO readers/writers for testing
+func (c *Client) SetIO(stdin io.Reader, stdout io.Writer) {
+	c.stdin = stdin
+	c.stdout = stdout
+}
+
+// Connect establishes a connection to the server and starts a terminal session
+func (c *Client) Connect() error {
+	// Parse URL
+	u, err := url.Parse(c.url)
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect: %v", err)
+		return fmt.Errorf("invalid URL: %v", err)
 	}
-	return &Client{client: client}, nil
-}
 
-// Close closes the SSH client connection
-func (c *Client) Close() error {
-	return c.client.Close()
-}
+	// Add auth token to URL
+	q := u.Query()
+	q.Set("token", c.authToken)
+	u.RawQuery = q.Encode()
 
-// NewInteractiveSession creates a new interactive SSH session
-func (c *Client) NewInteractiveSession() (*InteractiveSession, error) {
-	session, err := c.client.NewSession()
+	// Set up raw terminal mode if we're on a terminal
+	fd := int(os.Stdin.Fd())
+	if term.IsTerminal(fd) {
+		var err error
+		// Save the old state to restore later
+		c.oldState, err = term.MakeRaw(fd)
+		if err != nil {
+			return fmt.Errorf("failed to set raw terminal mode: %v", err)
+		}
+		// Ensure we restore the terminal state on exit
+		defer func() {
+			if err := term.Restore(fd, c.oldState); err != nil {
+				log.Printf("Failed to restore terminal: %v", err)
+			}
+		}()
+
+		// Handle signals for clean terminal restore
+		sigChan := make(chan os.Signal, 1)
+		signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGINT, syscall.SIGQUIT)
+		go func() {
+			<-sigChan
+			if err := term.Restore(fd, c.oldState); err != nil {
+				log.Printf("Failed to restore terminal on signal: %v", err)
+			}
+			os.Exit(1)
+		}()
+	}
+
+	// Connect to WebSocket server
+	ws, err := websocket.Dial(u.String(), "", "http://localhost")
 	if err != nil {
-		return nil, fmt.Errorf("failed to create session: %v", err)
+		return fmt.Errorf("failed to connect: %v", err)
+	}
+	defer ws.Close()
+
+	// Set up window size handling if we're on a terminal
+	if term.IsTerminal(fd) {
+		go c.handleWindowChanges(ws)
 	}
 
-	// Request PTY with default size
-	modes := ssh.TerminalModes{
-		ssh.ECHO:          1,
-		ssh.TTY_OP_ISPEED: 14400,
-		ssh.TTY_OP_OSPEED: 14400,
+	// Copy input/output with error handling
+	errs := make(chan error, 2)
+	go func() {
+		buf := make([]byte, 32*1024)
+		for {
+			n, err := c.stdin.Read(buf)
+			if err != nil {
+				if err != io.EOF {
+					log.Printf("Failed to read from stdin: %v", err)
+				}
+				errs <- err
+				return
+			}
+			log.Printf("Client sending to server: %q", buf[:n])
+			if err := websocket.Message.Send(ws, buf[:n]); err != nil {
+				log.Printf("Failed to send to server: %v", err)
+				errs <- err
+				return
+			}
+		}
+	}()
+	go func() {
+		buf := make([]byte, 32*1024)
+		for {
+			n, err := ws.Read(buf)
+			if err != nil {
+				if err != io.EOF {
+					log.Printf("Failed to read from server: %v", err)
+				}
+				errs <- err
+				return
+			}
+			log.Printf("Client received from server: %q", buf[:n])
+			if _, err := c.stdout.Write(buf[:n]); err != nil {
+				log.Printf("Failed to write to stdout: %v", err)
+				errs <- err
+				return
+			}
+		}
+	}()
+
+	// Wait for either copy to finish
+	err = <-errs
+	if err != nil && err != io.EOF {
+		return fmt.Errorf("I/O error: %v", err)
 	}
-	if err := session.RequestPty("xterm", 80, 24, modes); err != nil {
-		session.Close()
-		return nil, fmt.Errorf("failed to request PTY: %v", err)
+	return nil
+}
+
+// handleWindowChanges sends window size updates to the server
+func (c *Client) handleWindowChanges(ws *websocket.Conn) {
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGWINCH)
+
+	// Send initial size
+	if err := c.sendWindowSize(ws); err != nil {
+		log.Printf("Failed to send initial window size: %v", err)
+		return
 	}
 
-	return &InteractiveSession{session: session}, nil
+	// Handle window size changes
+	for range sigChan {
+		if err := c.sendWindowSize(ws); err != nil {
+			log.Printf("Failed to send window size: %v", err)
+			return
+		}
+	}
 }
 
-// InteractiveSession represents an interactive SSH session
-type InteractiveSession struct {
-	session *ssh.Session
-	stdin   io.WriteCloser
-	stdout  io.Reader
-	stderr  io.Reader
-}
-
-// Close closes the session
-func (s *InteractiveSession) Close() error {
-	return s.session.Close()
-}
-
-// Start starts an interactive shell
-func (s *InteractiveSession) Start() error {
-	var err error
-	s.stdin, err = s.session.StdinPipe()
+// sendWindowSize sends the current terminal size to the server
+func (c *Client) sendWindowSize(ws *websocket.Conn) error {
+	width, height, err := term.GetSize(int(os.Stdin.Fd()))
 	if err != nil {
-		return fmt.Errorf("failed to get stdin pipe: %v", err)
+		return fmt.Errorf("failed to get terminal size: %v", err)
 	}
 
-	s.stdout, err = s.session.StdoutPipe()
-	if err != nil {
-		return fmt.Errorf("failed to get stdout pipe: %v", err)
+	msg := Message{
+		Type: "resize",
+		Data: WindowSize{
+			Rows: uint16(height),
+			Cols: uint16(width),
+		},
 	}
 
-	s.stderr, err = s.session.StderrPipe()
-	if err != nil {
-		return fmt.Errorf("failed to get stderr pipe: %v", err)
-	}
-
-	return s.session.Shell()
-}
-
-// Wait waits for the remote command to exit
-func (s *InteractiveSession) Wait() error {
-	return s.session.Wait()
-}
-
-// Run executes a command in the session
-func (s *InteractiveSession) Run(cmd string) error {
-	return s.session.Run(cmd)
-}
-
-// Write writes data to the session's stdin
-func (s *InteractiveSession) Write(data []byte) (int, error) {
-	return s.stdin.Write(data)
-}
-
-// Resize changes the size of the terminal window
-func (s *InteractiveSession) Resize(width, height int) error {
-	return s.session.WindowChange(height, width)
-}
-
-// Signal sends a signal to the remote process
-func (s *InteractiveSession) Signal(sig ssh.Signal) error {
-	return s.session.Signal(sig)
+	return websocket.JSON.Send(ws, msg)
 }

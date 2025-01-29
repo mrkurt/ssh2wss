@@ -1,13 +1,17 @@
 package server
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
+	"time"
 
 	"flyssh/auth"
 
@@ -20,29 +24,42 @@ type WebSocketServer struct {
 	handler   websocket.Handler
 	mux       *http.ServeMux
 	sshServer SSHServerHandler
+	upgrader  *websocket.Server
+	server    *http.Server
 }
 
-// WebSocketWrapper wraps an SSH server with WebSocket transport
+// WebSocketWrapper wraps a WebSocket connection to implement net.Conn
 type WebSocketWrapper struct {
+	conn      *websocket.Conn
 	sshServer SSHServerHandler
-	port      int
-	authToken string
+	readBuf   bytes.Buffer
+	writeBuf  bytes.Buffer
+	closed    bool
+	readLock  sync.Mutex
+	writeLock sync.Mutex
 }
 
-// SSHServerHandler is the interface that must be implemented by SSH servers
+// SSHServerHandler defines the interface for SSH server implementations
 type SSHServerHandler interface {
-	// handleConnection handles a new SSH connection
-	handleConnection(conn net.Conn)
+	HandleConnection(net.Conn) error
 }
 
 // NewWebSocketServer creates a new WebSocket server
-func NewWebSocketServer(port int) *WebSocketServer {
+func NewWebSocketServer(sshServer SSHServerHandler, addr string) (*WebSocketServer, error) {
 	ws := &WebSocketServer{
-		port: port,
-		mux:  http.NewServeMux(),
+		sshServer: sshServer,
 	}
-	ws.handler = websocket.Handler(ws.handleConnection)
-	return ws
+
+	// Create WebSocket handler
+	handler := websocket.Handler(ws.handleConnection)
+
+	// Create HTTP server
+	ws.server = &http.Server{
+		Addr:    addr,
+		Handler: handler,
+	}
+
+	return ws, nil
 }
 
 // SetSSHServer sets the SSH server handler
@@ -50,12 +67,10 @@ func (s *WebSocketServer) SetSSHServer(sshServer SSHServerHandler) {
 	s.sshServer = sshServer
 }
 
-// NewWebSocketWrapper creates a new WebSocket wrapper around an SSH server
-func NewWebSocketWrapper(sshServer SSHServerHandler, port int, authToken string) *WebSocketWrapper {
+// NewWebSocketWrapper creates a new WebSocket wrapper
+func NewWebSocketWrapper(conn *websocket.Conn) *WebSocketWrapper {
 	return &WebSocketWrapper{
-		sshServer: sshServer,
-		port:      port,
-		authToken: authToken,
+		conn: conn,
 	}
 }
 
@@ -74,7 +89,8 @@ func NewWebSocketSSHServer(wsPort int, hostKey []byte) (*WebSocketWrapper, error
 	}
 
 	// Create the WebSocket wrapper around the SSH server
-	wrapper := NewWebSocketWrapper(sshServer, wsPort, authToken)
+	wrapper := NewWebSocketWrapper(nil)
+	wrapper.sshServer = sshServer
 
 	return wrapper, nil
 }
@@ -82,16 +98,21 @@ func NewWebSocketSSHServer(wsPort int, hostKey []byte) (*WebSocketWrapper, error
 // Start starts the WebSocket server
 func (s *WebSocketServer) Start() error {
 	s.mux.Handle("/", s.withAuth(s.handler))
-	addr := fmt.Sprintf(":%d", s.port)
-	log.Printf("WebSocket server listening on port %d", s.port)
-	return http.ListenAndServe(addr, s.mux)
+	return s.server.ListenAndServe()
 }
 
-// handleConnection handles an authenticated WebSocket connection
+// handleConnection handles a new WebSocket connection
 func (s *WebSocketServer) handleConnection(ws *websocket.Conn) {
-	log.Printf("WebSocket connection authenticated")
-	// The WebSocket connection implements net.Conn, so we can pass it directly
-	s.sshServer.handleConnection(ws)
+	log.Printf("New WebSocket connection from %s", ws.RemoteAddr())
+
+	// Create a WebSocket wrapper that implements net.Conn
+	wrapper := NewWebSocketWrapper(ws)
+	defer wrapper.Close()
+
+	// Handle the connection with the SSH server
+	if err := s.sshServer.HandleConnection(wrapper); err != nil {
+		log.Printf("SSH connection error: %v", err)
+	}
 }
 
 func executeCommand(cmd string) ([]byte, error) {
@@ -145,33 +166,87 @@ func (s *WebSocketServer) withAuth(wsHandler websocket.Handler) http.Handler {
 	})
 }
 
-// Start starts the WebSocket server
-func (w *WebSocketWrapper) Start() error {
-	handler := websocket.Handler(func(ws *websocket.Conn) {
-		// Verify auth token
-		if !w.verifyToken(ws.Request()) {
-			ws.Close()
-			return
-		}
-
-		// Handle the connection by passing it to the SSH server
-		w.sshServer.handleConnection(ws)
-	})
-
-	server := &http.Server{
-		Addr:    fmt.Sprintf(":%d", w.port),
-		Handler: handler,
-	}
-
-	return server.ListenAndServe()
+// SetSSHServer sets the SSH server for this wrapper
+func (w *WebSocketWrapper) SetSSHServer(sshServer SSHServerHandler) {
+	w.sshServer = sshServer
 }
 
-// verifyToken verifies the Bearer token in the Authorization header
-func (w *WebSocketWrapper) verifyToken(r *http.Request) bool {
-	auth := r.Header.Get("Authorization")
-	if !strings.HasPrefix(auth, "Bearer ") {
-		return false
+// handleSSHConnection handles the SSH connection over WebSocket
+func (w *WebSocketWrapper) handleSSHConnection() {
+	if err := w.sshServer.HandleConnection(w); err != nil {
+		log.Printf("SSH connection error: %v", err)
 	}
-	token := strings.TrimPrefix(auth, "Bearer ")
-	return token == w.authToken
+}
+
+// Read implements net.Conn
+func (w *WebSocketWrapper) Read(b []byte) (n int, err error) {
+	w.readLock.Lock()
+	defer w.readLock.Unlock()
+
+	if w.closed {
+		return 0, io.EOF
+	}
+
+	// If buffer is empty, read from WebSocket
+	if w.readBuf.Len() == 0 {
+		var buf []byte
+		if err := websocket.Message.Receive(w.conn, &buf); err != nil {
+			if err == io.EOF {
+				w.closed = true
+			}
+			return 0, err
+		}
+		w.readBuf.Write(buf)
+	}
+
+	return w.readBuf.Read(b)
+}
+
+// Write implements net.Conn
+func (w *WebSocketWrapper) Write(b []byte) (n int, err error) {
+	w.writeLock.Lock()
+	defer w.writeLock.Unlock()
+
+	if w.closed {
+		return 0, fmt.Errorf("connection closed")
+	}
+
+	if err := websocket.Message.Send(w.conn, b); err != nil {
+		return 0, err
+	}
+	return len(b), nil
+}
+
+// Close implements net.Conn
+func (w *WebSocketWrapper) Close() error {
+	if !w.closed {
+		w.closed = true
+		return w.conn.Close()
+	}
+	return nil
+}
+
+// LocalAddr implements net.Conn
+func (w *WebSocketWrapper) LocalAddr() net.Addr {
+	return w.conn.LocalAddr()
+}
+
+// RemoteAddr implements net.Conn
+func (w *WebSocketWrapper) RemoteAddr() net.Addr {
+	return w.conn.RemoteAddr()
+}
+
+// SetDeadline implements net.Conn
+func (w *WebSocketWrapper) SetDeadline(t time.Time) error {
+	return w.conn.SetDeadline(t)
+}
+
+// SetReadDeadline implements net.Conn
+func (w *WebSocketWrapper) SetReadDeadline(t time.Time) error {
+	return w.conn.SetReadDeadline(t)
+}
+
+// SetWriteDeadline implements net.Conn
+func (w *WebSocketWrapper) SetWriteDeadline(t time.Time) error {
+	return w.conn.SetWriteDeadline(t)
 }

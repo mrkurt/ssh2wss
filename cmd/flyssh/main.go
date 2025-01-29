@@ -1,48 +1,74 @@
 package main
 
 import (
+	"flag"
 	"fmt"
+	"log"
 	"os"
 
-	"flyssh/cmd/flyssh/commands"
+	"flyssh/client"
+	"flyssh/server"
 )
 
 func main() {
-	if err := run(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-}
+	// Define command-line flags
+	serverCmd := flag.NewFlagSet("server", flag.ExitOnError)
+	serverPort := serverCmd.Int("port", 8081, "Port to listen on")
 
-func run() error {
+	clientCmd := flag.NewFlagSet("client", flag.ExitOnError)
+	clientURL := clientCmd.String("url", "", "WebSocket URL to connect to (e.g. ws://localhost:8081)")
+
+	// Parse command
 	if len(os.Args) < 2 {
-		// No command specified, use client mode with no args
-		return commands.ClientCommand([]string{})
+		fmt.Println("Usage:")
+		fmt.Println("  flyssh server [-port PORT]")
+		fmt.Println("  flyssh client -url WS_URL")
+		os.Exit(1)
 	}
 
 	switch os.Args[1] {
 	case "server":
-		return commands.ServerCommand(os.Args[2:])
-	case "proxy":
-		return commands.ProxyCommand(os.Args[2:])
+		serverCmd.Parse(os.Args[2:])
+		runServer(*serverPort)
 	case "client":
-		return commands.ClientCommand(os.Args[2:])
-	case "dev":
-		return commands.DevCommand(os.Args[2:])
-	case "-h", "--help":
-		printUsage()
-		return nil
+		clientCmd.Parse(os.Args[2:])
+		if *clientURL == "" {
+			fmt.Println("Error: -url is required")
+			clientCmd.PrintDefaults()
+			os.Exit(1)
+		}
+		runClient(*clientURL)
 	default:
-		// Unknown command, treat as client mode with all args
-		return commands.ClientCommand(os.Args[1:])
+		fmt.Printf("Unknown command: %s\n", os.Args[1])
+		os.Exit(1)
 	}
 }
 
-func printUsage() {
-	fmt.Println("Usage:")
-	fmt.Println("  flyssh [options]                      Connect to remote host via WebSocket")
-	fmt.Println("  flyssh server [options]               Run in server mode")
-	fmt.Println("  flyssh proxy [options]                Run in proxy mode")
-	fmt.Println("  flyssh dev                           Run both server and proxy in development mode")
-	fmt.Println("\nRun 'flyssh -h' for options")
+func runServer(port int) {
+	// Check for auth token
+	authToken := os.Getenv("WSS_AUTH_TOKEN")
+	if authToken == "" {
+		log.Fatal("WSS_AUTH_TOKEN environment variable must be set")
+	}
+
+	// Create and start server
+	s := server.New(port)
+	log.Printf("Starting server on port %d", port)
+	if err := s.Start(); err != nil {
+		log.Fatalf("Server error: %v", err)
+	}
+}
+
+func runClient(url string) {
+	// Check for auth token
+	authToken := os.Getenv("WSS_AUTH_TOKEN")
+	if authToken == "" {
+		log.Fatal("WSS_AUTH_TOKEN environment variable must be set")
+	}
+
+	// Create and connect client
+	c := client.New(url, authToken)
+	if err := c.Connect(); err != nil {
+		log.Fatalf("Client error: %v", err)
+	}
 }
