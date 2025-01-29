@@ -32,22 +32,29 @@ export async function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(disposable);
 
-    // Watch for Remote SSH errors
+    // Watch for Remote SSH errors in the output channel
+    const outputChannel = vscode.window.createOutputChannel('Remote SSH');
+    context.subscriptions.push(outputChannel);
+
     context.subscriptions.push(
         vscode.window.onDidOpenTerminal((terminal: vscode.Terminal) => {
             if (terminal.name.includes('Remote SSH')) {
-                const listener = terminal.onDidWriteLine((line: string) => {
-                    if (line.toLowerCase().includes('error') || line.toLowerCase().includes('failed')) {
-                        vscode.window.showErrorMessage('Remote SSH connection failed', 'Fix with Fly')
-                            .then((selection: string | undefined) => {
-                                if (selection === 'Fix with Fly') {
-                                    // TODO: Show Fly-specific error handling
-                                    vscode.commands.executeCommand('flyssh.configure');
-                                }
-                            });
+                // Watch the Remote SSH output channel for errors
+                const disposable = vscode.workspace.onDidChangeTextDocument(e => {
+                    if (e.document.uri.scheme === 'output' && e.document.uri.path.includes('Remote SSH')) {
+                        const text = e.document.getText();
+                        if (text.toLowerCase().includes('error') || text.toLowerCase().includes('failed')) {
+                            vscode.window.showErrorMessage('Remote SSH connection failed', 'Fix with Fly')
+                                .then((selection: string | undefined) => {
+                                    if (selection === 'Fix with Fly') {
+                                        // TODO: Show Fly-specific error handling
+                                        vscode.commands.executeCommand('flyssh.configure');
+                                    }
+                                });
+                        }
                     }
                 });
-                context.subscriptions.push(listener);
+                context.subscriptions.push(disposable);
             }
         })
     );

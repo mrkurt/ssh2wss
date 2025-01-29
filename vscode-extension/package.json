@@ -22,6 +22,29 @@
         "command": "flyssh.configure",
         "title": "Configure FlySsh Connection"
       }
+    ],
+    "walkthroughs": [
+      {
+        "id": "flyssh.setup",
+        "title": "Connect to Fly Dev Machine",
+        "description": "Get started with remote development on Fly",
+        "steps": [
+          {
+            "id": "flyssh.configure.step",
+            "title": "Connect to Dev Machine",
+            "description": "Configure your remote development environment",
+            "media": {
+              "image": "resources/connect.png",
+              "altText": "Connect to Fly Dev Machine"
+            },
+            "completionEvents": ["onCommand:flyssh.configure"],
+            "button": {
+              "text": "Connect Now",
+              "command": "flyssh.configure"
+            }
+          }
+        ]
+      }
     ]
   },
   "scripts": {
