@@ -1,49 +1,31 @@
 # SSH over WebSocket CLI
 
-A command-line tool that enables SSH connections over WebSocket, with built-in server and client functionality. No external tooling required.
+A command-line tool that lets you SSH into remote machines through WebSocket connections, enabling SSH access through environments where traditional SSH ports are blocked or unavailable. The tool includes both client and server components, with the server being a lightweight component that enables the WebSocket transport.
 
 ## Features
 
-- All-in-one CLI tool for both server and client operations
-- Full-featured SSH server implementation (no system sshd required)
+- SSH through WebSocket transport (works where traditional SSH ports are blocked)
+- Full terminal support with all the features you expect from SSH:
   * Interactive shell with PTY support
   * Window resizing
   * Environment variables
   * Non-interactive command execution
   * Uses your default shell (zsh, bash, etc.)
-- WebSocket transport with Bearer token authentication
+- Simple token-based authentication
 - Secure communication with SSH encryption
 - Cross-platform support
 
 ## Usage
 
-### Server Mode
-
-Start an SSH server that accepts connections over WebSocket:
-
-```bash
-# Generate an authentication token
-flyssh auth generate-token
-
-# Start the server (save the token for client use)
-export WSS_AUTH_TOKEN=your-generated-token
-flyssh server
-```
-
-Server options:
-- `--ssh-port`: SSH server port (default: 2222)
-- `--ws-port`: WebSocket server port (default: 8081)
-- `--host`: Host to bind to (default: localhost)
-
 ### Client Mode
 
-Connect to a remote SSH-over-WebSocket server:
+Connect to a remote machine through WebSocket:
 
 ```bash
-# Set the authentication token
+# Set the authentication token provided by the server
 export WSS_AUTH_TOKEN=server-token
 
-# Connect to the server
+# Start an interactive session
 flyssh client ws://server-address:8081
 
 # Or run a specific command
@@ -55,18 +37,70 @@ Client options:
 - `--cols`: Terminal width (auto-detected by default)
 - `--rows`: Terminal height (auto-detected by default)
 
+### Server Mode
+
+The server component needs to be running on the remote machine you want to connect to. It's typically set up once and left running:
+
+```bash
+# Generate an authentication token (save this for client use)
+flyssh auth generate-token
+
+# Start the server
+export WSS_AUTH_TOKEN=your-generated-token
+flyssh server
+```
+
+Server options:
+- `--ws-port`: WebSocket port (default: 8081)
+- `--host`: Host to bind to (default: localhost)
+
 ## Architecture
 
 ```mermaid
-graph LR
-    subgraph "Local Machine"
-        CLI[flyssh client] --> |WebSocket| Remote
+graph TB
+    subgraph "🖥️ Local Machine"
+        CLI[("🐬 flyssh client")]
+        PTY["📺 PTY/Terminal\nHandling"]
+        WSC["📡 WebSocket\nClient"]
+        
+        CLI --> |"1. Start\nSession"| PTY
+        PTY --> |"2. Terminal\nI/O"| WSC
+        WSC --> |"3. SSH over\nWebSocket"| Internet
     end
 
-    subgraph "Remote Server"
-        Remote[flyssh server] --> |Executes| Shell
+    subgraph "☁️ Internet"
+        Internet[("🌐 Encrypted\nTransport")]
     end
+
+    subgraph "🖧 Remote Server"
+        WSS["📡 WebSocket\nServer"]
+        Auth["🔐 Token Auth"]
+        SSH["🔒 SSH Server"]
+        Shell["🐚 Shell/Commands"]
+        
+        Internet --> |"4. Encrypted\nPackets"| WSS
+        WSS --> |"5. Validate"| Auth
+        WSS --> |"6. SSH\nProtocol"| SSH
+        SSH --> |"7. Execute"| Shell
+    end
+
+    style Internet fill:#f5f5f5,stroke:#666,stroke-width:2px
+    style WSS fill:#e1f5fe,stroke:#0288d1
+    style SSH fill:#e8f5e9,stroke:#388e3c
+    style CLI fill:#fff3e0,stroke:#ef6c00
+    style Shell fill:#fce4ec,stroke:#c2185b
 ```
+
+The diagram shows the complete flow:
+1. Client initiates a session with terminal handling
+2. Terminal I/O is managed by the PTY subsystem
+3. All data is wrapped in SSH protocol and sent over WebSocket
+4. Encrypted packets traverse the network
+5. Server validates the WebSocket connection using token auth
+6. SSH protocol is processed by the SSH server
+7. Commands are executed in a shell with full TTY support
+
+All SSH protocol handling (encryption, authentication, channel management) happens within the client and server components, while WebSocket provides the transport layer.
 
 ## Security
 
