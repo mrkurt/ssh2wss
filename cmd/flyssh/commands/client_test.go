@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"flyssh/auth"
-	"flyssh/server"
+	"flyssh/core/auth"
+	"flyssh/core/server"
 )
 
 // getFreePorts returns available ports for SSH and WebSocket servers

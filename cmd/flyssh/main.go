@@ -6,19 +6,10 @@ import (
 	"log"
 	"os"
 
-	"flyssh/client"
-	"flyssh/server"
+	"flyssh/core"
 )
 
 func main() {
-	// Define command-line flags
-	serverCmd := flag.NewFlagSet("server", flag.ExitOnError)
-	serverPort := serverCmd.Int("port", 8081, "Port to listen on")
-
-	clientCmd := flag.NewFlagSet("client", flag.ExitOnError)
-	clientURL := clientCmd.String("url", "", "WebSocket URL to connect to (e.g. ws://localhost:8081)")
-
-	// Parse command
 	if len(os.Args) < 2 {
 		fmt.Println("Usage:")
 		fmt.Println("  flyssh server [-port PORT]")
@@ -28,47 +19,38 @@ func main() {
 
 	switch os.Args[1] {
 	case "server":
-		serverCmd.Parse(os.Args[2:])
-		runServer(*serverPort)
+		// Parse server flags
+		cmd := flag.NewFlagSet("server", flag.ExitOnError)
+		port := cmd.Int("port", 8081, "Port to listen on")
+		cmd.Parse(os.Args[2:])
+
+		// Start server
+		s := core.NewServer(*port)
+		log.Printf("Starting WebSocket server on :%d", *port)
+		if err := s.Start(); err != nil {
+			log.Fatalf("Server error: %v", err)
+		}
+
 	case "client":
-		clientCmd.Parse(os.Args[2:])
-		if *clientURL == "" {
+		// Parse client flags
+		cmd := flag.NewFlagSet("client", flag.ExitOnError)
+		url := cmd.String("url", "", "WebSocket URL to connect to (e.g. ws://localhost:8081)")
+		cmd.Parse(os.Args[2:])
+
+		if *url == "" {
 			fmt.Println("Error: -url is required")
-			clientCmd.PrintDefaults()
+			cmd.PrintDefaults()
 			os.Exit(1)
 		}
-		runClient(*clientURL)
+
+		// Start client
+		c := core.NewClient(*url, os.Getenv("WSS_AUTH_TOKEN"))
+		if err := c.Connect(); err != nil {
+			log.Fatalf("Client error: %v", err)
+		}
+
 	default:
 		fmt.Printf("Unknown command: %s\n", os.Args[1])
 		os.Exit(1)
-	}
-}
-
-func runServer(port int) {
-	// Check for auth token
-	authToken := os.Getenv("WSS_AUTH_TOKEN")
-	if authToken == "" {
-		log.Fatal("WSS_AUTH_TOKEN environment variable must be set")
-	}
-
-	// Create and start server
-	s := server.New(port)
-	log.Printf("Starting server on port %d", port)
-	if err := s.Start(); err != nil {
-		log.Fatalf("Server error: %v", err)
-	}
-}
-
-func runClient(url string) {
-	// Check for auth token
-	authToken := os.Getenv("WSS_AUTH_TOKEN")
-	if authToken == "" {
-		log.Fatal("WSS_AUTH_TOKEN environment variable must be set")
-	}
-
-	// Create and connect client
-	c := client.New(url, authToken)
-	if err := c.Connect(); err != nil {
-		log.Fatalf("Client error: %v", err)
 	}
 }

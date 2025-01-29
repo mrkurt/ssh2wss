@@ -1,12 +1,13 @@
 package tests
 
 import (
-	"flyssh/server"
+	"flyssh/core"
 	"fmt"
 	"io"
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -14,9 +15,38 @@ import (
 	"github.com/creack/pty"
 )
 
+// ClientBinaryPath is the path to the client binary
+var ClientBinaryPath string
+
+// ServerBinaryPath is the path to the server binary
+var ServerBinaryPath string
+
+func init() {
+	// Create tmp directory if it doesn't exist
+	if err := os.MkdirAll("tmp", 0755); err != nil {
+		panic(fmt.Sprintf("Failed to create tmp directory: %v", err))
+	}
+
+	// Build the client binary
+	buildCmd := exec.Command("go", "build", "-o", "tmp/flyssh", "../cmd/flyssh")
+	if err := buildCmd.Run(); err != nil {
+		os.RemoveAll("tmp")
+		panic(fmt.Sprintf("Failed to build client binary: %v", err))
+	}
+
+	// Get absolute path to binaries
+	var err error
+	ClientBinaryPath, err = filepath.Abs("tmp/flyssh")
+	if err != nil {
+		os.RemoveAll("tmp")
+		panic(fmt.Sprintf("Failed to get client binary path: %v", err))
+	}
+	ServerBinaryPath = ClientBinaryPath // Same binary, different command
+}
+
 // TestServer represents a test server instance
 type TestServer struct {
-	Server     *server.Server
+	Server     *core.Server
 	Port       int
 	Done       chan error
 	AuthToken  string
@@ -36,7 +66,7 @@ func NewTestServer(t *testing.T) *TestServer {
 	os.Setenv("WSS_AUTH_TOKEN", authToken)
 
 	// Start server
-	srv := server.New(port)
+	srv := core.NewServer(port)
 	done := make(chan error, 1)
 	go func() {
 		done <- srv.Start()

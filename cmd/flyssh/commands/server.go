@@ -5,51 +5,37 @@ import (
 	"fmt"
 	"os"
 
-	"flyssh/auth"
-	"flyssh/server"
+	"flyssh/core/server"
 )
 
 func ServerCommand(args []string) error {
 	fs := flag.NewFlagSet("server", flag.ExitOnError)
-	sshPort := fs.Int("ssh-port", 2222, "SSH server port")
-	wsPort := fs.Int("ws-port", 8081, "WebSocket server port")
-	keyPath := fs.String("key", "", "Optional path to SSH host key (if not provided, will generate based on WebSocket address)")
+	port := fs.Int("port", 8081, "Server port")
 	devMode := fs.Bool("dev", false, "Run in development mode with auto-generated token")
 	fs.Parse(args)
 
 	// In dev mode, generate a token and set it in the environment
 	if *devMode {
-		token := auth.GenerateToken()
+		token := server.GenerateDevToken()
 		os.Setenv("WSS_AUTH_TOKEN", token)
 		fmt.Printf("\n=== Development Mode ===\n")
-		fmt.Printf("WebSocket URL: ws://localhost:%d\n", *wsPort)
+		fmt.Printf("WebSocket URL: ws://localhost:%d\n", *port)
 		fmt.Printf("Auth Token: %s\n", token)
-		fmt.Printf("SSH Command: ssh -p %d localhost\n", *sshPort)
 		fmt.Printf("====================\n\n")
 	}
 
-	var hostKey []byte
-	var err error
+	// Create and start server
+	s := server.New(*port)
+	return s.Start()
+}
 
-	if *keyPath != "" {
-		// Use provided host key file
-		hostKey, err = os.ReadFile(*keyPath)
-		if err != nil {
-			return fmt.Errorf("failed to read host key: %v", err)
-		}
-	} else {
-		// Generate host key based on WebSocket address
-		wsAddress := fmt.Sprintf("localhost:%d", *wsPort)
-		hostKey, err = auth.GenerateKey(wsAddress)
-		if err != nil {
-			return fmt.Errorf("failed to generate host key: %v", err)
-		}
+// generateToken creates a random token for development mode
+func generateToken() string {
+	const tokenLength = 32
+	const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	result := make([]byte, tokenLength)
+	for i := range result {
+		result[i] = chars[i%len(chars)]
 	}
-
-	bridge, err := server.NewBridge(*sshPort, *wsPort, hostKey)
-	if err != nil {
-		return fmt.Errorf("failed to create bridge: %v", err)
-	}
-
-	return bridge.Start()
+	return string(result)
 }
