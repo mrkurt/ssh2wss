@@ -51,10 +51,10 @@ func TestClientBinaryWithShell(t *testing.T) {
 	pty := NewPTYTest(t)
 	defer pty.Cleanup(t)
 
-	// Start a clean zsh shell
-	cmd := exec.Command("/bin/zsh", "-f")
+	// Start a clean shell
+	cmd := exec.Command("/bin/sh", "-i")
 	cmd.Env = []string{
-		"SHELL=/bin/zsh",
+		"SHELL=/bin/sh",
 		"TERM=dumb",
 		"PS1=$ ",
 		"PATH=" + os.Getenv("PATH"),
