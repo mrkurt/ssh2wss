@@ -1,230 +1,145 @@
-# SSH to WebSocket Bridge
+# SSH over WebSocket CLI
 
-A secure bridge that allows SSH connections to be forwarded over WebSocket, with authentication support.
+A command-line tool that enables SSH connections over WebSocket, with built-in server and client functionality. No external tooling required.
 
 ## Features
 
+- All-in-one CLI tool for both server and client operations
 - Full-featured SSH server implementation (no system sshd required)
   * Interactive shell with PTY support
   * Window resizing
   * Environment variables
   * Non-interactive command execution
   * Uses your default shell (zsh, bash, etc.)
-- WebSocket server with Bearer token authentication
-- Command execution and interactive shell support
+- WebSocket transport with Bearer token authentication
 - Secure communication with SSH encryption
+- Cross-platform support
+
+## Usage
+
+### Server Mode
+
+Start an SSH server that accepts connections over WebSocket:
+
+```bash
+# Generate an authentication token
+flyssh auth generate-token
+
+# Start the server (save the token for client use)
+export WSS_AUTH_TOKEN=your-generated-token
+flyssh server
+```
+
+Server options:
+- `--ssh-port`: SSH server port (default: 2222)
+- `--ws-port`: WebSocket server port (default: 8081)
+- `--host`: Host to bind to (default: localhost)
+
+### Client Mode
+
+Connect to a remote SSH-over-WebSocket server:
+
+```bash
+# Set the authentication token
+export WSS_AUTH_TOKEN=server-token
+
+# Connect to the server
+flyssh client ws://server-address:8081
+
+# Or run a specific command
+flyssh client ws://server-address:8081 -- ls -la
+```
+
+Client options:
+- `--term`: Terminal type (default: xterm)
+- `--cols`: Terminal width (auto-detected by default)
+- `--rows`: Terminal height (auto-detected by default)
 
 ## Architecture
 
 ```mermaid
-graph TB
+graph LR
     subgraph "Local Machine"
-        SSH[SSH Client]
-        Bridge[SSH Server]
-        WS[WebSocket Client]
-        
-        SSH --> |localhost:2222| Bridge
-        Bridge --> |Forwards| WS
-    end
-
-    subgraph "Internet"
-        PROXY[HTTP/HTTPS Proxy]
-        FW[Firewall/Load Balancer]
-        
-        WS --> |wss://| PROXY
-        PROXY --> |wss://| FW
+        CLI[flyssh client] --> |WebSocket| Remote
     end
 
     subgraph "Remote Server"
-        WSS[WebSocket Server]
-        CMD[Commands/Shell]
-        
-        FW --> |ws://localhost:8081| WSS
-        WSS --> |Executes| CMD
+        Remote[flyssh server] --> |Executes| Shell
     end
-
-    style Internet fill:#f5f5f5,stroke:#666,stroke-width:2px
-    style PROXY fill:#e1f5fe,stroke:#0288d1
-    style FW fill:#e8f5e9,stroke:#388e3c
-```
-
-## Authentication
-
-The WebSocket server requires authentication using a Bearer token. Set the token in the environment variable:
-
-```bash
-export WSS_AUTH_TOKEN=your-secret-token
-```
-
-When connecting to the WebSocket server, include the Authorization header:
-
-```
-Authorization: Bearer your-secret-token
-```
-
-## Usage
-
-1. Start the bridge:
-```bash
-go run main.go [options]
-```
-
-Options:
-- `-ssh-port`: SSH server port (default: 2222)
-- `-ws-port`: WebSocket server port (default: 8081)
-- `-key`: Path to SSH host key (default: "host.key")
-
-2. Connect via SSH:
-```bash
-ssh -p 2222 localhost
-```
-
-3. Connect via WebSocket:
-```javascript
-const ws = new WebSocket('ws://localhost:8081');
-ws.setRequestHeader('Authorization', 'Bearer your-secret-token');
 ```
 
 ## Security
 
-- Local SSH server accepts all connections (no authentication required)
-- Remote WebSocket server requires Bearer token authentication
+- WebSocket server requires Bearer token authentication
 - All communication is encrypted using SSH protocol
-- Host key is used for SSH server identification
+- Host keys are automatically generated and managed
+- No need to modify system SSH configuration
 
 ## Development Setup
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/flyssh.git
+git clone https://github.com/superfly/flyssh.git
 cd flyssh
 ```
 
-2. Install Go (1.21 or later):
-```bash
-# macOS with Homebrew
-brew install go
+2. Install Go (1.21 or later)
 
-# Linux
-# See https://golang.org/doc/install
+3. Build the tool:
+```bash
+go build -o flyssh ./cmd/flyssh
 ```
 
-3. Install dependencies:
-```bash
-go mod download
-```
-
-4. Generate a development token:
-```bash
-go run main.go -generate-token
-export WSS_AUTH_TOKEN=<generated-token>
-```
-
-5. Run tests:
+4. Run tests:
 ```bash
 go test -v ./...
 ```
 
-6. Start the server in development mode:
+## Examples
+
+1. Start a server and connect from another terminal:
 ```bash
-go run main.go -ssh-port 2222 -ws-port 8081
+# Terminal 1: Start server
+export WSS_AUTH_TOKEN=secret-token
+flyssh server
+
+# Terminal 2: Connect client
+export WSS_AUTH_TOKEN=secret-token
+flyssh client ws://localhost:8081
 ```
 
-## Deployment
-
-### Server Component
-
-1. Build the server:
+2. Run a remote command:
 ```bash
-go build -o flyssh
+flyssh client ws://server:8081 -- uname -a
 ```
 
-2. Generate a secure token:
+3. Start server on custom ports:
 ```bash
-./flyssh -generate-token
-```
-
-3. Set up environment:
-```bash
-# Store token securely (e.g., in systemd environment file)
-echo "WSS_AUTH_TOKEN=your-generated-token" > /etc/flyssh/env
-```
-
-4. Create systemd service (optional):
-```ini
-[Unit]
-Description=SSH to WebSocket Bridge Server
-After=network.target
-
-[Service]
-ExecStart=/usr/local/bin/flyssh -ws-port 8081
-EnvironmentFile=/etc/flyssh/env
-Restart=always
-User=flyssh
-Group=flyssh
-
-[Install]
-WantedBy=multi-user.target
-```
-
-5. Start the service:
-```bash
-sudo systemctl enable flyssh
-sudo systemctl start flyssh
-```
-
-### Client Setup
-
-1. Build the client:
-```bash
-go build -o flyssh-client
-```
-
-2. Configure authentication:
-```bash
-# Store token securely
-echo "WSS_AUTH_TOKEN=your-token" > ~/.flyssh/config
-chmod 600 ~/.flyssh/config
-```
-
-3. Start the client:
-```bash
-./flyssh-client -remote ws://your-server:8081
-```
-
-4. Connect via SSH:
-```bash
-ssh -p 2222 localhost
+flyssh server --ssh-port 2223 --ws-port 8082
 ```
 
 ## Troubleshooting
 
 Common issues and solutions:
 
-1. Port conflicts:
-```bash
-# Check if ports are in use
-lsof -i :2222
-lsof -i :8081
-
-# Use different ports
-go run main.go -ssh-port 2223 -ws-port 8082
-```
-
-2. Authentication issues:
+1. Authentication errors:
 ```bash
 # Verify token is set
 echo $WSS_AUTH_TOKEN
 
 # Generate new token
-go run main.go -generate-token
+flyssh auth generate-token
 ```
 
-3. Connection issues:
+2. Connection issues:
 ```bash
 # Enable debug logging
-go run main.go -debug
+flyssh server --debug
+flyssh client --debug ws://server:8081
+```
 
-# Test WebSocket connection
-wscat -c ws://localhost:8081 -H "Authorization: Bearer $WSS_AUTH_TOKEN"
+3. Port conflicts:
+```bash
+# Use different ports
+flyssh server --ssh-port 2223 --ws-port 8082
 ```
