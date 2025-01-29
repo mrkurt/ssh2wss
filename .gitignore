@@ -28,4 +28,4 @@ DEVELOPMENT.md
 tmp/
 
 # Test binaries
-tests/tmp/ 
+tests/tmp/ tmp/
