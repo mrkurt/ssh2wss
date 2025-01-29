@@ -27,11 +27,20 @@ func init() {
 		panic(fmt.Sprintf("Failed to create tmp directory: %v", err))
 	}
 
-	// Build the client binary
-	buildCmd := exec.Command("go", "build", "-o", "tmp/flyssh", "../cmd/flyssh")
-	if err := buildCmd.Run(); err != nil {
+	// First build everything to check for compilation errors
+	buildAllCmd := exec.Command("go", "build", "./...")
+	buildAllCmd.Dir = ".." // Run from project root
+	if output, err := buildAllCmd.CombinedOutput(); err != nil {
 		os.RemoveAll("tmp")
-		panic(fmt.Sprintf("Failed to build client binary: %v", err))
+		panic(fmt.Sprintf("Failed to build project: %v\nOutput: %s", err, output))
+	}
+
+	// Then build the binary we need for tests
+	buildCmd := exec.Command("go", "build", "-o", "tests/tmp/flyssh", "./cmd/flyssh")
+	buildCmd.Dir = ".." // Run from project root
+	if output, err := buildCmd.CombinedOutput(); err != nil {
+		os.RemoveAll("tmp")
+		panic(fmt.Sprintf("Failed to build binary: %v\nOutput: %s", err, output))
 	}
 
 	// Get absolute path to binaries
