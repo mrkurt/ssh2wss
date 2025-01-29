@@ -352,3 +352,73 @@ func TestWindowResize(t *testing.T) {
 		t.Errorf("Unexpected terminal size: got %dx%d, want 24x80", rows, cols)
 	}
 }
+
+func TestCommandEscaping(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		term    string
+		verify  func(t *testing.T, output []byte)
+	}{
+		{
+			name:    "Simple command",
+			command: "echo hello",
+			term:    "xterm",
+			verify: func(t *testing.T, output []byte) {
+				if !bytes.Contains(output, []byte("hello")) {
+					t.Errorf("Expected output to contain 'hello', got: %q", string(output))
+				}
+			},
+		},
+		{
+			name:    "Command with single quotes",
+			command: "echo 'hello world'",
+			term:    "xterm",
+			verify: func(t *testing.T, output []byte) {
+				if !bytes.Contains(output, []byte("hello world")) {
+					t.Errorf("Expected output to contain 'hello world', got: %q", string(output))
+				}
+			},
+		},
+		{
+			name:    "Command with special characters",
+			command: "echo 'hello\nworld'",
+			term:    "xterm",
+			verify: func(t *testing.T, output []byte) {
+				if !bytes.Contains(output, []byte("hello\nworld")) {
+					t.Errorf("Expected output to contain 'hello\\nworld', got: %q", string(output))
+				}
+			},
+		},
+		{
+			name:    "Command with ANSI escape sequences",
+			command: "echo '\x1b[31mError\x1b[0m'",
+			term:    "xterm-256color",
+			verify: func(t *testing.T, output []byte) {
+				expected := []byte{0x1b, '[', '3', '1', 'm', 'E', 'r', 'r', 'o', 'r', 0x1b, '[', '0', 'm', '\n'}
+				if !bytes.Equal(bytes.TrimSpace(output), bytes.TrimSpace(expected)) {
+					t.Errorf("Expected ANSI-colored output, got: %q", string(output))
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := terminalConfig{
+				Term: tt.term,
+			}
+			cmd := prepareCommand(tt.command, config)
+
+			// Execute the command
+			output, err := exec.Command("bash", "-c", cmd).CombinedOutput()
+			if err != nil {
+				t.Errorf("Command failed to execute: %v\nOutput: %s", err, output)
+				return
+			}
+
+			// Verify the output
+			tt.verify(t, output)
+		})
+	}
+}

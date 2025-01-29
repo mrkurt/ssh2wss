@@ -21,6 +21,11 @@ func Connect(addr string, config *ssh.ClientConfig) (*Client, error) {
 	return &Client{client: client}, nil
 }
 
+// ConnectSSH creates a new direct SSH client connection (no WebSocket)
+func ConnectSSH(addr string, config *ssh.ClientConfig) (*Client, error) {
+	return Connect(addr, config)
+}
+
 // Close closes the SSH client connection
 func (c *Client) Close() error {
 	return c.client.Close()

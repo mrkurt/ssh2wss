@@ -1,0 +1,61 @@
+{
+  "name": "vscode-fly-dev",
+  "displayName": "Fly Dev Environments",
+  "description": "Quick connect to Fly.io dev environments",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.86.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onView:remoteHub",
+    "*"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "vscode-fly-dev.setupDev",
+        "title": "Connect to Fly Dev Environment",
+        "category": "Remote"
+      }
+    ],
+    "viewsWelcome": [
+      {
+        "view": "remoteHub",
+        "contents": "Connect to your Fly Dev Environment.\n[Connect to Fly Dev Environment](command:vscode-fly-dev.setupDev)",
+        "when": "!isInDevelopmentContainer"
+      }
+    ],
+    "errorHandler": {
+      "ms-vscode-remote.remote-ssh": {
+        "type": "prompt",
+        "program": "vscode-fly-dev.setupDev"
+      }
+    }
+  },
+  "extensionDependencies": [
+    "ms-vscode-remote.remote-ssh"
+  ],
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src --ext ts",
+    "test": "node ./out/test/runTest.js"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.86.0",
+    "@types/node": "^20.11.19",
+    "@typescript-eslint/eslint-plugin": "^7.0.1",
+    "@typescript-eslint/parser": "^7.0.1",
+    "eslint": "^8.56.0",
+    "typescript": "^5.3.3"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}

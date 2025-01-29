@@ -8,19 +8,21 @@ import (
 )
 
 func getDefaultShell() string {
-	if shell := os.Getenv("SHELL"); shell != "" {
-		return shell
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "/bin/bash"
 	}
-	return "/bin/bash"
+	return shell
 }
 
 func getShellArgs(isLogin bool) []string {
 	if isLogin {
 		return []string{"-l"}
 	}
-	return nil
+	return []string{}
 }
 
 func getCommandArgs(command string) []string {
-	return []string{"-c", command}
+	// No need to escape quotes since we're using exec.Command directly
+	return []string{"-l", "-i", "-c", command}
 }

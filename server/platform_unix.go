@@ -18,8 +18,13 @@ type winsize struct {
 }
 
 // setWinsize sets the size of the terminal window
-func setWinsize(f *os.File, w, h int) error {
-	ws := &winsize{
+func setWinsize(f *os.File, w, h uint32) error {
+	ws := &struct {
+		Height uint16
+		Width  uint16
+		x      uint16 // unused
+		y      uint16 // unused
+	}{
 		Width:  uint16(w),
 		Height: uint16(h),
 	}
@@ -40,12 +45,17 @@ func getExitStatus(err *exec.ExitError) (uint32, bool) {
 	if status, ok := err.Sys().(syscall.WaitStatus); ok {
 		return uint32(status.ExitStatus()), true
 	}
-	return 0, false
+	return 1, false
 }
 
 // setupProcessAttributes configures platform-specific process attributes
 func setupProcessAttributes(cmd *exec.Cmd, isPty bool) {
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		// Unix processes don't need special flags for PTY
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+
+	// Only set Setsid for PTY
+	if isPty {
+		cmd.SysProcAttr.Setsid = true
 	}
 }
