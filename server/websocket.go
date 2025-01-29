@@ -2,7 +2,6 @@ package server
 
 import (
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"net/http"
@@ -17,8 +16,10 @@ import (
 
 // WebSocketServer handles WebSocket connections with authentication
 type WebSocketServer struct {
-	port    int
-	handler websocket.Handler
+	port      int
+	handler   websocket.Handler
+	mux       *http.ServeMux
+	sshServer SSHServerHandler
 }
 
 // WebSocketWrapper wraps an SSH server with WebSocket transport
@@ -38,9 +39,15 @@ type SSHServerHandler interface {
 func NewWebSocketServer(port int) *WebSocketServer {
 	ws := &WebSocketServer{
 		port: port,
+		mux:  http.NewServeMux(),
 	}
 	ws.handler = websocket.Handler(ws.handleConnection)
 	return ws
+}
+
+// SetSSHServer sets the SSH server handler
+func (s *WebSocketServer) SetSSHServer(sshServer SSHServerHandler) {
+	s.sshServer = sshServer
 }
 
 // NewWebSocketWrapper creates a new WebSocket wrapper around an SSH server
@@ -74,80 +81,17 @@ func NewWebSocketSSHServer(wsPort int, hostKey []byte) (*WebSocketWrapper, error
 
 // Start starts the WebSocket server
 func (s *WebSocketServer) Start() error {
-	http.Handle("/", s.withAuth(s.handler))
+	s.mux.Handle("/", s.withAuth(s.handler))
 	addr := fmt.Sprintf(":%d", s.port)
 	log.Printf("WebSocket server listening on port %d", s.port)
-	return http.ListenAndServe(addr, nil)
+	return http.ListenAndServe(addr, s.mux)
 }
 
 // handleConnection handles an authenticated WebSocket connection
-//
-// IMPORTANT: This uses an intentionally simple protocol where raw bytes are passed directly
-// through the WebSocket connection. DO NOT modify this to add JSON, framing, or any other protocol.
-// The SSH functionality is handled entirely by the SSH server on one end and SSH client libraries
-// on the other - the WebSocket is just a dumb pipe between them.
-//
-// The WebSocket connection acts as a pure bidirectional byte stream, exactly like a TCP connection
-// would, allowing the SSH protocol to work unchanged over WebSocket transport.
 func (s *WebSocketServer) handleConnection(ws *websocket.Conn) {
 	log.Printf("WebSocket connection authenticated")
-
-	// Handle the WebSocket connection
-	var buf [1024]byte
-	for {
-		n, err := ws.Read(buf[:])
-		if err != nil {
-			if err != io.EOF {
-				log.Printf("WebSocket read error: %v", err)
-			}
-			return
-		}
-
-		cmd := string(buf[:n])
-		log.Printf("WebSocket received command: %s", cmd)
-
-		// Execute the command and stream back the response
-		command := exec.Command(getDefaultShell(), "-c", cmd)
-
-		// Create pipes for stdout and stderr
-		stdout, err := command.StdoutPipe()
-		if err != nil {
-			log.Printf("Failed to create stdout pipe: %v", err)
-			ws.Write([]byte(fmt.Sprintf("Error: %v\n", err)))
-			continue
-		}
-
-		stderr, err := command.StderrPipe()
-		if err != nil {
-			log.Printf("Failed to create stderr pipe: %v", err)
-			ws.Write([]byte(fmt.Sprintf("Error: %v\n", err)))
-			continue
-		}
-
-		if err := command.Start(); err != nil {
-			log.Printf("Failed to start command: %v", err)
-			ws.Write([]byte(fmt.Sprintf("Error: %v\n", err)))
-			continue
-		}
-
-		// Stream both stdout and stderr to WebSocket
-		go func() {
-			io.Copy(ws, stderr)
-		}()
-
-		if _, err := io.Copy(ws, stdout); err != nil {
-			log.Printf("Failed to stream output: %v", err)
-			ws.Write([]byte(fmt.Sprintf("Error: %v\n", err)))
-		}
-
-		if err := command.Wait(); err != nil {
-			if exitErr, ok := err.(*exec.ExitError); ok {
-				ws.Write([]byte(fmt.Sprintf("Command failed with exit code %d\n", exitErr.ExitCode())))
-			} else {
-				ws.Write([]byte(fmt.Sprintf("Error: %v\n", err)))
-			}
-		}
-	}
+	// The WebSocket connection implements net.Conn, so we can pass it directly
+	s.sshServer.handleConnection(ws)
 }
 
 func executeCommand(cmd string) ([]byte, error) {
