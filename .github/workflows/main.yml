@@ -8,7 +8,7 @@ on:
   push:
     branches: [ "**" ]  # Run on all branches
   pull_request:  # Run on all PRs
-  workflow_dispatch:
+  workflow_dispatch:  # Allow manual triggers for testing
 
 permissions:
   contents: write  # Needed for creating releases
@@ -32,28 +32,39 @@ jobs:
     needs: macos-build
     uses: ./.github/workflows/test-macos.yml
 
+  windows-build:
+    name: "🪟 Build"
+    uses: ./.github/workflows/build-windows.yml
+
+  windows-test:
+    name: "🪟 Test"
+    needs: windows-build
+    uses: ./.github/workflows/test-windows.yml
+
   check-changes:
     name: "🔍 Check Changes"
-    needs: [linux-test, macos-test]
+    needs: [linux-test, macos-test, windows-test]
     uses: ./.github/workflows/check-changes.yml
 
+  # Run on non-main branches to show what would be released
   would_release:
     name: "📝 Would Release"
     needs: check-changes
     if: |
-      github.ref != 'refs/heads/main' &&
-      needs.check-changes.outputs.has_changes == 'true'
+      needs.check-changes.outputs.has_changes == 'true' &&
+      github.ref != 'refs/heads/main'
     uses: ./.github/workflows/would-release.yml
     with:
       release_notes: ${{ needs.check-changes.outputs.release_notes }}
       sha: ${{ github.sha }}
 
+  # Run on main branch to create actual releases
   release:
     name: "🚀 Release"
     needs: check-changes
     if: |
-      github.ref == 'refs/heads/main' &&
-      needs.check-changes.outputs.has_changes == 'true'
+      needs.check-changes.outputs.has_changes == 'true' &&
+      github.ref == 'refs/heads/main'
     permissions:
       contents: write  # Explicitly pass write permission to release workflow
     uses: ./.github/workflows/release.yml

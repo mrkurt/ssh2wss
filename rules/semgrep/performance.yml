@@ -1,0 +1,36 @@
+# Performance and efficiency rules
+paths:
+  include:
+    - core/
+    - cmd/
+  exclude:
+    - "**/*_test.go"
+
+rules:
+  - id: no-string-concat-loop
+    pattern: |
+      for $I := range $X {
+        ... += ...
+      }
+    message: String concatenation in loops is inefficient. Use strings.Builder.
+    languages: [go]
+    severity: ERROR
+
+  - id: no-defer-in-loop
+    pattern: |
+      for $COND {
+        defer $F(...)
+      }
+    message: Defer in loops can lead to memory leaks. Move defer outside the loop or use a separate function.
+    languages: [go]
+    severity: ERROR
+
+  - id: large-copy-by-value
+    patterns:
+      - pattern: func $F($X $T, ...)
+      - metavariable-regex:
+          metavariable: $T
+          regex: (struct{.*}{64,}|[64]byte)
+    message: Large values should be passed by pointer to avoid expensive copies
+    languages: [go]
+    severity: ERROR 

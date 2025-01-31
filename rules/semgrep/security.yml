@@ -1,0 +1,44 @@
+paths:
+  include:
+    - "core/"
+    - "cmd/"
+  exclude:
+    - "**/*_test.go"
+
+rules:
+  - id: no-hardcoded-credentials
+    patterns:
+      - pattern-either:
+          - pattern: const $X = "..."
+          - pattern: var $X = "..."
+      - pattern-regex: (password|secret|key|token|credential)
+      - pattern-not: "..."
+    message: Credentials must come from environment or secure configuration
+    languages: [go]
+    severity: ERROR
+
+  - id: no-system-exec
+    pattern-either:
+      - pattern: exec.Command("sh", ...)
+      - pattern: exec.Command("bash", ...)
+      - pattern: exec.Command("/bin/sh", ...)
+      - pattern: exec.Command("/bin/bash", ...)
+    message: Shell execution is dangerous. Use specific commands or ask for review.
+    languages: [go]
+    severity: ERROR
+
+  - id: no-direct-http
+    pattern: http.ListenAndServe(...)
+    message: Direct HTTP servers must be justified. Add nosemgrep if behind TLS termination.
+    languages: [go]
+    severity: ERROR
+
+  - id: require-timeouts-http
+    pattern-either:
+      - pattern: "&http.Client{...}"
+      - pattern: "http.Client{...}"
+    pattern-not: |
+      Timeout: $D
+    message: HTTP clients must have timeouts set to prevent resource exhaustion
+    languages: [go]
+    severity: ERROR 

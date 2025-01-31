@@ -1,0 +1,26 @@
+paths:
+  include:
+    - core/
+    - cmd/
+  exclude:
+    - "**/*_test.go"
+
+rules:
+  - id: require-context-first
+    pattern: |
+      func $F($X, ctx context.Context, ...) $R { ... }
+    message: Context must be the first parameter for proper cancellation chains
+    languages: [go]
+    severity: ERROR
+
+  - id: no-background-context
+    pattern: context.Background()
+    message: Use of context.Background() should be restricted to application root. Pass contexts down instead.
+    languages: [go]
+    severity: ERROR
+
+  - id: no-todo-context
+    pattern: context.TODO()
+    message: context.TODO() should not be used in production code. Use proper context propagation.
+    languages: [go]
+    severity: ERROR 

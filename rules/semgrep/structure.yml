@@ -1,0 +1,29 @@
+# Project structure and organization rules
+paths:
+  include:
+    - "/"
+    - "*/"
+    - "**/"
+  exclude: []
+
+rules:
+  - id: enforce-project-layout
+    pattern-regex: ^(?!cmd|core|tests)/.*\.go$
+    message: |
+      Invalid project structure detected. This project uses a strict layout:
+      - core/: Core library code
+      - cmd/: Application entrypoints
+      - tests/: Integration tests
+      Do not create new top-level directories without discussion.
+    languages: [go]
+    severity: ERROR
+
+  - id: no-internal-pkg
+    pattern-regex: ^(internal|pkg)/.*\.go$
+    message: |
+      Do not use internal/ or pkg/ directories.
+      This project uses:
+      - core/ for library code
+      - cmd/ for executables
+    languages: [go]
+    severity: ERROR 

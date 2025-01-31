@@ -1,0 +1,22 @@
+#!/bin/bash
+
+# Exit on error
+set -e
+
+echo "Running critical linting checks..."
+if ! ./rules/lint.sh 2>&1; then
+    echo -e "\n❌ Critical linting checks failed!"
+    echo -e "\n⚠️  IMPORTANT: DO NOT try to bypass these checks! ⚠️"
+    echo -e "\nThese rules protect our codebase from serious issues. If you're seeing this error:"
+    echo "1. Review and fix the issues reported above"
+    echo "2. NEVER add '// nosemgrep' comments without explicit permission"
+    echo "3. NEVER modify the rules to bypass these checks"
+    echo "4. If you believe you need an exception:"
+    echo "   - Document why it's necessary"
+    echo "   - Get explicit approval from the team"
+    echo "   - Only then can exceptions be added"
+    echo -e "\nRemember: These rules catch real problems!"
+    exit 1
+fi
+
+exit 0 

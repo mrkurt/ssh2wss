@@ -1,0 +1,60 @@
+paths:
+  include:
+    - "core/"
+    - "cmd/"
+  exclude:
+    - "**/*_test.go"
+
+rules:
+  - id: no-raw-waitgroup
+    pattern: var $W sync.WaitGroup
+    message: WaitGroup.Done() must always be deferred to prevent deadlocks from early returns
+    languages: [go]
+    severity: ERROR
+
+  - id: mutex-unlock-defer
+    pattern-either:
+      - pattern: |
+          $M.Lock()
+          ...
+          $M.Unlock()
+      - pattern: |
+          $M.RLock()
+          ...
+          $M.RUnlock()
+    pattern-not: |
+      $M.Lock()
+      defer $M.Unlock()
+    message: Mutex unlocks must be deferred to prevent deadlocks from early returns
+    languages: [go]
+    severity: ERROR
+
+  - id: no-goroutine-local
+    patterns:
+      - pattern: |
+          go func() {
+            $V := $X
+            ...
+          }()
+      - pattern-not: |
+          $V := $X
+          go func() {
+            ...
+          }()
+    message: Variables used in goroutines must be captured explicitly to prevent race conditions
+    languages: [go]
+    severity: ERROR
+
+  - id: no-global-slices
+    pattern: |
+      var $X []$T
+    message: Global slices can cause data races. Use proper synchronization or local variables.
+    languages: [go]
+    severity: ERROR
+
+  - id: no-global-maps
+    pattern: |
+      var $X map[$K]$V
+    message: Global maps can cause data races. Use sync.Map or proper synchronization.
+    languages: [go]
+    severity: ERROR 

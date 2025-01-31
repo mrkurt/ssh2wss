@@ -1,0 +1,22 @@
+{
+  "interactions": [
+    {
+      "input": "ZWNobyBoZWxsbwo=",
+      "output": "ZWNobyBoZWxsbw0KaGVsbG8NCiQg",
+      "delay": 0.1,
+      "windowSize": {
+        "rows": 24,
+        "cols": 80
+      }
+    },
+    {
+      "input": "ZWNobyAtZSAnXDAzM1szMW1yZWRcMDMzWzBtJwo=",
+      "output": "ZWNobyAtZSAnXDAzM1szMW1yZWRcMDMzWzBtJw0KG1szMW1yZWQbWzBtDQokIA==",
+      "delay": 0.1,
+      "windowSize": {
+        "rows": 24,
+        "cols": 80
+      }
+    }
+  ]
+}
