@@ -53,49 +53,66 @@ async function getCommitHistory(since?: string): Promise<CommitInfo[]> {
     ],
   });
   const { stdout } = await logCmd.output();
-  const commits = new TextDecoder().decode(stdout).trim().split("\n");
+  const output = new TextDecoder().decode(stdout).trim();
+  
+  // Debug logging
+  console.log("Git log output:", output);
+  
+  if (!output) {
+    console.log("No commits found in range:", rangeArg);
+    return [];
+  }
+  
+  const commits = output.split("\n");
   
   // Add full message body and file changes to each commit
   const results: CommitInfo[] = [];
   for (const commit of commits) {
-    const commitData = JSON.parse(commit) as CommitInfo;
-    
-    // Get full message body
-    const bodyCmd = new Deno.Command("git", {
-      args: ["--no-pager", "show", "--no-patch", "--format=%B", commitData.hash],
-      stdout: "piped",
-      stderr: "piped",
-    });
-    const { stdout: bodyOut } = await bodyCmd.output();
-    const body = new TextDecoder().decode(bodyOut);
-    commitData.body = body.trim().replace(/\\n/g, "\n");
-
-    // Get file changes
-    const filesCmd = new Deno.Command("git", {
-      args: [
-        "--no-pager",
-        "show",
-        "--format=",
-        "--numstat",
-        commitData.hash
-      ],
-      stdout: "piped",
-      stderr: "piped",
-    });
-    const { stdout: filesOut } = await filesCmd.output();
-    const fileChanges = new TextDecoder().decode(filesOut).trim().split("\n")
-      .filter(line => line.trim())
-      .map(line => {
-        const [additions, deletions, path] = line.split("\t");
-        return {
-          path,
-          additions: parseInt(additions) || 0,
-          deletions: parseInt(deletions) || 0
-        };
+    try {
+      console.log("Parsing commit:", commit);
+      const commitData = JSON.parse(commit) as CommitInfo;
+      
+      // Get full message body
+      const bodyCmd = new Deno.Command("git", {
+        args: ["--no-pager", "show", "--no-patch", "--format=%B", commitData.hash],
+        stdout: "piped",
+        stderr: "piped",
       });
-    commitData.files = fileChanges;
-    
-    results.push(commitData);
+      const { stdout: bodyOut } = await bodyCmd.output();
+      const body = new TextDecoder().decode(bodyOut);
+      commitData.body = body.trim().replace(/\\n/g, "\n");
+
+      // Get file changes
+      const filesCmd = new Deno.Command("git", {
+        args: [
+          "--no-pager",
+          "show",
+          "--format=",
+          "--numstat",
+          commitData.hash
+        ],
+        stdout: "piped",
+        stderr: "piped",
+      });
+      const { stdout: filesOut } = await filesCmd.output();
+      const fileChanges = new TextDecoder().decode(filesOut).trim().split("\n")
+        .filter(line => line.trim())
+        .map(line => {
+          const [additions, deletions, path] = line.split("\t");
+          return {
+            path,
+            additions: parseInt(additions) || 0,
+            deletions: parseInt(deletions) || 0
+          };
+        });
+      commitData.files = fileChanges;
+      
+      results.push(commitData);
+    } catch (error) {
+      console.error("Error parsing commit:", error);
+      console.error("Problematic commit data:", commit);
+      continue;  // Skip this commit but continue with others
+    }
   }
   
   return results;
