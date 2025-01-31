@@ -1,0 +1,44 @@
+name: Test Windows
+
+on:
+  workflow_call:  # Makes this workflow reusable
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          check-latest: true
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Run unit tests
+        run: |
+          go test -v -tags=windows ./core/...
+          go test -v -tags=windows ./cmd/...
+
+      - name: Run integration tests
+        run: |
+          go test -v -tags=windows ./tests/... -run "TestServer|TestClient"
+
+      - name: Run terminal tests
+        env:
+          TEST_DEBUG: "1"  # Enable debug logging for terminal tests
+        run: |
+          go test -v -tags=windows ./tests/... -run "TestWindowsTerminal"
+
+      - name: Upload test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs-windows
+          path: |
+            tests/tmp/**/*.log
+            tests/tmp/**/test.*.log
+          retention-days: 7 

@@ -1,0 +1,30 @@
+name: Build Windows
+
+on:
+  workflow_call:  # Makes this workflow reusable
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          check-latest: true
+
+      - name: Build
+        run: go build -v ./...
+
+      - name: Build Client Binary
+        run: |
+          go build -o flyssh.exe ./cmd/flyssh
+          
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: flyssh-windows
+          path: flyssh.exe
+          retention-days: 1 

@@ -1,0 +1,76 @@
+# Error handling and resource safety rules
+paths:
+  include:
+    - core/
+    - cmd/
+  exclude:
+    - "**/*_test.go"
+
+rules:
+  - id: no-discard-errors
+    pattern: "$X, _ := $F(...)"
+    message: "Errors must be handled. Use errcheck if certain it is safe to ignore."
+    languages: [go]
+    severity: ERROR
+
+  - id: no-blind-error-wrap
+    pattern: "fmt.Errorf(\"...: %w\", err)"
+    message: "Error wrapping must include context about the operation that failed"
+    languages: [go]
+    severity: ERROR
+
+  - id: no-naked-returns-pointer
+    pattern: |
+      func $F(...) (*$T, error) {
+        ...
+        return
+      }
+    message: "Naked returns of pointers can return nil unexpectedly. Be explicit."
+    languages: [go]
+    severity: ERROR
+
+  - id: must-close-resources
+    patterns:
+      - pattern-either:
+          - pattern: "$X, $ERR := os.Open(...)"
+          - pattern: "$X, $ERR := os.Create(...)"
+          - pattern: "$X, $ERR := net.Listen(...)"
+          - pattern: "$X := bufio.NewScanner(...)"
+      - pattern-not: "defer $X.Close()"
+    message: "Resources must be closed with defer to prevent leaks"
+    languages: [go]
+    severity: ERROR
+
+  - id: close-after-defer
+    pattern: |
+      defer $X.Close()
+      ... = $X.$METHOD(...)
+    message: "Resources should be checked for errors before deferring Close()"
+    languages: [go]
+    severity: ERROR
+
+  - id: prefer-io-copy
+    pattern-either:
+      - pattern: |
+          $BUF := make([]byte, $SIZE)
+          for {
+            $N, $ERR := $READER.Read($BUF)
+            ...
+            $WRITER.Write($BUF[0:$N])
+          }
+      - pattern: |
+          var $BUF []byte
+          $BUF, $ERR := io.ReadAll($READER)
+          ...
+          $WRITER.Write($BUF)
+    message: |
+      Manual buffer management is error-prone. Use io.Copy to ensure correct:
+      - EOF handling
+      - Error propagation
+      - Memory management
+      Options:
+      - io.Copy(writer, reader) for streaming
+      - io.CopyBuffer(writer, reader, buf) for custom buffer size
+      - io.Pipe() for concurrent operations
+    languages: [go]
+    severity: ERROR 

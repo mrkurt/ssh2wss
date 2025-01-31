@@ -1,3 +1,6 @@
+//go:build unix
+// +build unix
+
 /*
 Security Testing Guidelines for WebSocket PTY Server
 

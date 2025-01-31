@@ -3,16 +3,13 @@ package core
 import (
 	"fmt"
 	"io"
-	"log"
 	"os"
-	"os/signal"
-	"syscall"
 
 	"golang.org/x/net/websocket"
 	"golang.org/x/term"
 )
 
-// Client represents a WebSocket client that connects to a PTY server
+// Client represents a terminal client
 type Client struct {
 	url       string
 	authToken string
@@ -20,7 +17,7 @@ type Client struct {
 	stdout    io.Writer
 }
 
-// NewClient creates a new client instance
+// NewClient creates a new terminal client
 func NewClient(url string, authToken string) *Client {
 	return &Client{
 		url:       url,
@@ -36,100 +33,56 @@ func (c *Client) SetIO(stdin io.Reader, stdout io.Writer) {
 	c.stdout = stdout
 }
 
-// Connect establishes a WebSocket connection and starts the PTY session
+// Connect connects to a WebSocket server and starts the terminal session
 func (c *Client) Connect() error {
 	// Connect to WebSocket server
 	origin := "http://localhost"
 	url := fmt.Sprintf("%s?token=%s", c.url, c.authToken)
 	ws, err := websocket.Dial(url, "", origin)
 	if err != nil {
-		return fmt.Errorf("failed to connect to WebSocket server: %v", err)
+		return fmt.Errorf("failed to connect to server: %v", err)
 	}
 	defer ws.Close()
 
-	// Set up terminal
-	fd := int(os.Stdin.Fd())
-	oldState, err := term.MakeRaw(fd)
-	if err != nil {
-		return fmt.Errorf("failed to set up terminal: %v", err)
-	}
-	defer term.Restore(fd, oldState)
-
-	// Handle window resize
-	sigwinch := make(chan os.Signal, 1)
-	signal.Notify(sigwinch, syscall.SIGWINCH)
-	go func() {
-		for range sigwinch {
-			if width, height, err := term.GetSize(fd); err == nil {
-				msg := struct {
-					Type string `json:"type"`
-					Data struct {
-						Rows uint16 `json:"rows"`
-						Cols uint16 `json:"cols"`
-					} `json:"data"`
-				}{
-					Type: "resize",
-					Data: struct {
-						Rows uint16 `json:"rows"`
-						Cols uint16 `json:"cols"`
-					}{
-						Rows: uint16(height),
-						Cols: uint16(width),
-					},
-				}
-				websocket.JSON.Send(ws, msg)
-			}
-		}
-	}()
-
-	// Send initial window size
-	if width, height, err := term.GetSize(fd); err == nil {
-		msg := struct {
-			Type string `json:"type"`
-			Data struct {
-				Rows uint16 `json:"rows"`
-				Cols uint16 `json:"cols"`
-			} `json:"data"`
-		}{
-			Type: "resize",
-			Data: struct {
-				Rows uint16 `json:"rows"`
-				Cols uint16 `json:"cols"`
-			}{
-				Rows: uint16(height),
-				Cols: uint16(width),
-			},
-		}
-		websocket.JSON.Send(ws, msg)
-	}
-
-	// Copy input to WebSocket
-	go func() {
-		buf := make([]byte, 32*1024)
-		for {
-			n, err := c.stdin.Read(buf)
+	// Set up terminal if stdin is a real terminal
+	var oldState *term.State
+	if f, ok := c.stdin.(*os.File); ok {
+		fd := int(f.Fd())
+		if term.IsTerminal(fd) {
+			oldState, err = term.MakeRaw(fd)
 			if err != nil {
-				return
+				return fmt.Errorf("failed to set up terminal: %v", err)
 			}
-			log.Printf("Client sending to server: %q", buf[:n])
-			if _, err := ws.Write(buf[:n]); err != nil {
-				return
-			}
-		}
-	}()
+			defer term.Restore(fd, oldState)
 
-	// Copy WebSocket output to stdout
-	buf := make([]byte, 32*1024)
-	for {
-		n, err := ws.Read(buf)
-		if err != nil {
-			if err != io.EOF {
-				return fmt.Errorf("failed to read from server: %v", err)
-			}
-			return nil
-		}
-		if _, err := c.stdout.Write(buf[:n]); err != nil {
-			return fmt.Errorf("failed to write to stdout: %v", err)
+			// Set up window resize handling (platform-specific)
+			c.setupWindowResize(ws, fd)
 		}
 	}
+
+	// Handle bidirectional copying using the standard Go pattern for
+	// terminal/network IO. This pattern:
+	// 1. Uses separate goroutines for each direction to prevent blocking
+	// 2. Returns when either direction fails/closes (using errc channel)
+	// 3. Matches the approach used in Go's crypto/ssh and other packages
+	errc := make(chan error, 1)
+
+	// Copy stdin to websocket
+	go func(ws *websocket.Conn, stdin io.Reader, errc chan<- error) {
+		_, err := io.Copy(ws, stdin)
+		errc <- err
+	}(ws, c.stdin, errc)
+
+	// Copy websocket to stdout
+	go func(ws *websocket.Conn, stdout io.Writer, errc chan<- error) {
+		_, err := io.Copy(stdout, ws)
+		errc <- err
+	}(ws, c.stdout, errc)
+
+	// Wait for either direction to finish and return
+	// We only care about non-EOF errors
+	if err := <-errc; err != nil && err != io.EOF {
+		return fmt.Errorf("IO error: %v", err)
+	}
+	return nil
 }

@@ -1,0 +1,23 @@
+# Test code quality and organization rules
+paths:
+  include:
+    - "**/*_test.go"
+  exclude: []
+
+rules:
+  - id: no-duplicate-test-types
+    patterns:
+      - pattern-either:
+          - pattern: type $TYPE struct { ... }
+          - pattern: type $TYPE interface { ... }
+      - pattern-inside: |
+          package $PKG
+      - focus-metavariable: $TYPE
+    message: |
+      Duplicate test type declaration detected.
+      To prevent test compilation errors:
+      1. Move shared test types to a common test package (e.g. tests/testutil)
+      2. Or use unique names for test-local types
+      3. Or move the type to the package being tested
+    languages: [go]
+    severity: ERROR 
