@@ -32,6 +32,8 @@ jobs:
           deno-version: v2.x
 
       - id: check
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           if ./.github/workflows/scripts/check-changes; then
             echo "has_changes=true" >> $GITHUB_OUTPUT
