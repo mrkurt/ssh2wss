@@ -45,6 +45,8 @@ jobs:
     name: "🔍 Check Changes"
     needs: [linux-test, macos-test, windows-test]
     uses: ./.github/workflows/check-changes.yml
+    secrets:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
   # Run on non-main branches to show what would be released
   would_release:
