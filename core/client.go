@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"golang.org/x/net/websocket"
 	"golang.org/x/term"
@@ -15,6 +17,7 @@ type Client struct {
 	authToken string
 	stdin     io.Reader
 	stdout    io.Writer
+	sessionID string
 }
 
 // NewClient creates a new terminal client
@@ -35,7 +38,7 @@ func (c *Client) SetIO(stdin io.Reader, stdout io.Writer) {
 
 // Connect connects to a WebSocket server and starts the terminal session
 func (c *Client) Connect() error {
-	// Connect to WebSocket server
+	// Connect to WebSocket server for data
 	origin := "http://localhost"
 	url := fmt.Sprintf("%s?token=%s", c.url, c.authToken)
 	ws, err := websocket.Dial(url, "", origin)
@@ -43,6 +46,27 @@ func (c *Client) Connect() error {
 		return fmt.Errorf("failed to connect to server: %v", err)
 	}
 	defer ws.Close()
+
+	// Wait for session ID
+	var msg struct {
+		Type      string `json:"type"`
+		SessionID string `json:"session_id"`
+	}
+	if err := websocket.JSON.Receive(ws, &msg); err != nil {
+		return fmt.Errorf("failed to receive session ID: %v", err)
+	}
+	if msg.Type != "session" {
+		return fmt.Errorf("expected session message, got %s", msg.Type)
+	}
+	c.sessionID = msg.SessionID
+
+	// Connect control channel
+	controlURL := fmt.Sprintf("%s/control?token=%s", c.url, c.authToken)
+	control, err := websocket.Dial(controlURL, "", origin)
+	if err != nil {
+		return fmt.Errorf("failed to connect control channel: %v", err)
+	}
+	defer control.Close()
 
 	// Set up terminal if stdin is a real terminal
 	var oldState *term.State
@@ -55,8 +79,8 @@ func (c *Client) Connect() error {
 			}
 			defer term.Restore(fd, oldState)
 
-			// Set up window resize handling (platform-specific)
-			c.setupWindowResize(ws, fd)
+			// Set up window resize handling
+			go c.handleResize(control, fd)
 		}
 	}
 
@@ -85,4 +109,57 @@ func (c *Client) Connect() error {
 		return fmt.Errorf("IO error: %v", err)
 	}
 	return nil
+}
+
+// handleResize handles window resize events
+func (c *Client) handleResize(ws *websocket.Conn, fd int) {
+	// Send initial window size
+	if width, height, err := term.GetSize(fd); err == nil {
+		msg := struct {
+			Type      string `json:"type"`
+			SessionID string `json:"session_id"`
+			Data      struct {
+				Rows uint16 `json:"rows"`
+				Cols uint16 `json:"cols"`
+			} `json:"data"`
+		}{
+			Type:      "resize",
+			SessionID: c.sessionID,
+			Data: struct {
+				Rows uint16 `json:"rows"`
+				Cols uint16 `json:"cols"`
+			}{
+				Rows: uint16(height),
+				Cols: uint16(width),
+			},
+		}
+		websocket.JSON.Send(ws, msg)
+	}
+
+	// Handle window resize
+	sigwinch := make(chan os.Signal, 1)
+	signal.Notify(sigwinch, syscall.SIGWINCH)
+	for range sigwinch {
+		if width, height, err := term.GetSize(fd); err == nil {
+			msg := struct {
+				Type      string `json:"type"`
+				SessionID string `json:"session_id"`
+				Data      struct {
+					Rows uint16 `json:"rows"`
+					Cols uint16 `json:"cols"`
+				} `json:"data"`
+			}{
+				Type:      "resize",
+				SessionID: c.sessionID,
+				Data: struct {
+					Rows uint16 `json:"rows"`
+					Cols uint16 `json:"cols"`
+				}{
+					Rows: uint16(height),
+					Cols: uint16(width),
+				},
+			}
+			websocket.JSON.Send(ws, msg)
+		}
+	}
 }

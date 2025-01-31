@@ -28,9 +28,10 @@ func ClientCommand(args []string) error {
 		// Use random high port (49152-65535)
 		rand.Seed(time.Now().UnixNano())
 		port := rand.Intn(65535-49152) + 49152
-		token := core.GenerateDevToken()
-		os.Setenv("WSS_AUTH_TOKEN", token)
+		devToken := core.GenerateDevToken()
+		os.Setenv("WSS_AUTH_TOKEN", devToken)
 		*url = fmt.Sprintf("ws://localhost:%d", port)
+		*token = devToken // Set the token flag value too
 
 		// Start server in background
 		s := core.NewServer(port)
@@ -38,7 +39,7 @@ func ClientCommand(args []string) error {
 
 		fmt.Printf("\n=== Development Mode ===\n")
 		fmt.Printf("WebSocket URL: %s\n", *url)
-		fmt.Printf("Auth Token: %s\n", token)
+		fmt.Printf("Auth Token: %s\n", *token)
 		fmt.Printf("====================\n\n")
 	}
 
