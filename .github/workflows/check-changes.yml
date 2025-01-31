@@ -9,6 +9,10 @@ on:
       release_notes:
         description: "Release notes if changes were found"
         value: ${{ jobs.check.outputs.release_notes }}
+    secrets:
+      ANTHROPIC_API_KEY:
+        description: "Anthropic API key for generating release notes"
+        required: true
 
 jobs:
   check:
