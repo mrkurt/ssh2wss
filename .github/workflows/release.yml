@@ -90,80 +90,55 @@ jobs:
           draft: false
           prerelease: true
 
-  build-linux:
+  upload-assets:
     needs: create
     if: needs.create.result == 'success'
-    runs-on: ubuntu-24.04  # Explicitly use the upcoming version
+    runs-on: ubuntu-latest
     steps:
-      - id: checkout
-        uses: actions/checkout@v4
-
-      - id: setup-go
-        uses: actions/setup-go@v4
+      - id: download-linux
+        uses: actions/download-artifact@v4
         with:
-          go-version: '1.22'
+          name: flyssh-linux
+          path: .
 
-      - id: build
-        run: GOOS=linux GOARCH=amd64 go build -o ssh2wss-linux-amd64
+      - id: download-macos
+        uses: actions/download-artifact@v4
+        with:
+          name: flyssh-macos
+          path: .
 
-      - id: upload
+      - id: download-windows
+        uses: actions/download-artifact@v4
+        with:
+          name: flyssh-windows
+          path: .
+
+      - id: upload-linux
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ needs.create.outputs.upload_url }}
-          asset_path: ./ssh2wss-linux-amd64
-          asset_name: ssh2wss-linux-amd64
+          asset_path: ./flyssh-linux-amd64
+          asset_name: flyssh-linux-amd64
           asset_content_type: application/octet-stream
 
-  build-darwin-amd64:
-    needs: create
-    if: needs.create.result == 'success'
-    runs-on: macos-latest
-    steps:
-      - id: checkout
-        uses: actions/checkout@v4
-
-      - id: setup-go
-        uses: actions/setup-go@v4
-        with:
-          go-version: '1.22'
-
-      - id: build
-        run: GOOS=darwin GOARCH=amd64 go build -o ssh2wss-darwin-amd64
-
-      - id: upload
+      - id: upload-macos
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ needs.create.outputs.upload_url }}
-          asset_path: ./ssh2wss-darwin-amd64
-          asset_name: ssh2wss-darwin-amd64
+          asset_path: ./flyssh-darwin-amd64
+          asset_name: flyssh-darwin-amd64
           asset_content_type: application/octet-stream
 
-  build-darwin-arm64:
-    needs: create
-    if: needs.create.result == 'success'
-    runs-on: macos-latest
-    steps:
-      - id: checkout
-        uses: actions/checkout@v4
-
-      - id: setup-go
-        uses: actions/setup-go@v4
-        with:
-          go-version: '1.22'
-
-      - id: build
-        run: GOOS=darwin GOARCH=arm64 go build -o ssh2wss-darwin-arm64
-
-      - id: upload
+      - id: upload-windows
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ needs.create.outputs.upload_url }}
-          asset_path: ./ssh2wss-darwin-arm64
-          asset_name: ssh2wss-darwin-arm64
+          asset_path: ./flyssh.exe
+          asset_name: flyssh-windows-amd64.exe
           asset_content_type: application/octet-stream 
