@@ -7,6 +7,8 @@ import (
 	"os/signal"
 	"syscall"
 
+	"flyssh/core/log"
+
 	"golang.org/x/net/websocket"
 	"golang.org/x/term"
 )
@@ -47,6 +49,8 @@ func (c *Client) Connect() error {
 	}
 	defer ws.Close()
 
+	log.Debug.Printf("Connected to server at %s", ws.RemoteAddr())
+
 	// Wait for session ID
 	var msg struct {
 		Type      string `json:"type"`
@@ -60,6 +64,8 @@ func (c *Client) Connect() error {
 	}
 	c.sessionID = msg.SessionID
 
+	log.Debug.Printf("Session established %s with %s", c.sessionID, ws.RemoteAddr())
+
 	// Connect control channel
 	controlURL := fmt.Sprintf("%s/control?token=%s", c.url, c.authToken)
 	control, err := websocket.Dial(controlURL, "", origin)
@@ -67,6 +73,8 @@ func (c *Client) Connect() error {
 		return fmt.Errorf("failed to connect control channel: %v", err)
 	}
 	defer control.Close()
+
+	log.Debug.Printf("Control channel connected %s to %s", c.sessionID, control.RemoteAddr())
 
 	// Set up terminal if stdin is a real terminal
 	var oldState *term.State
@@ -93,21 +101,31 @@ func (c *Client) Connect() error {
 
 	// Copy stdin to websocket
 	go func(ws *websocket.Conn, stdin io.Reader, errc chan<- error) {
+		log.Debug.Printf("Starting stdin->websocket copy %s to %s", c.sessionID, ws.RemoteAddr())
 		_, err := io.Copy(ws, stdin)
+		if err != nil && err != io.EOF {
+			log.Debug.Printf("stdin->websocket error %s to %s: %v", c.sessionID, ws.RemoteAddr(), err)
+		}
 		errc <- err
 	}(ws, c.stdin, errc)
 
 	// Copy websocket to stdout
 	go func(ws *websocket.Conn, stdout io.Writer, errc chan<- error) {
+		log.Debug.Printf("Starting websocket->stdout copy %s from %s", c.sessionID, ws.RemoteAddr())
 		_, err := io.Copy(stdout, ws)
+		if err != nil && err != io.EOF {
+			log.Debug.Printf("websocket->stdout error %s from %s: %v", c.sessionID, ws.RemoteAddr(), err)
+		}
 		errc <- err
 	}(ws, c.stdout, errc)
 
 	// Wait for either direction to finish and return
 	// We only care about non-EOF errors
 	if err := <-errc; err != nil && err != io.EOF {
+		log.Debug.Printf("IO error %s with %s: %v", c.sessionID, ws.RemoteAddr(), err)
 		return fmt.Errorf("IO error: %v", err)
 	}
+	log.Debug.Printf("Connection closed %s with %s", c.sessionID, ws.RemoteAddr())
 	return nil
 }
 

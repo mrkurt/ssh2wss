@@ -12,7 +12,13 @@ func ServerCommand(args []string) error {
 	fs := flag.NewFlagSet("server", flag.ExitOnError)
 	port := fs.Int("port", 8081, "Server port")
 	devMode := fs.Bool("dev", false, "Run in development mode with auto-generated token")
+	debug := fs.Bool("debug", false, "Enable debug logging")
 	fs.Parse(args)
+
+	// Enable debug logging if flag is set
+	if *debug {
+		os.Setenv("WSS_DEBUG", "1")
+	}
 
 	// In dev mode, generate a token and set it in the environment
 	if *devMode {

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
-	"time"
 
 	"flyssh/core"
 )
@@ -17,16 +16,21 @@ func ClientCommand(args []string) error {
 	url := fs.String("url", os.Getenv("WSS_URL"), "WebSocket server URL")
 	token := fs.String("token", os.Getenv("WSS_AUTH_TOKEN"), "Auth token")
 	dev := fs.Bool("dev", false, "Run in development mode with local server")
+	debug := fs.Bool("debug", false, "Enable debug logging")
 
 	// Parse flags
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
+	// Enable debug logging if flag is set
+	if *debug {
+		os.Setenv("WSS_DEBUG", "1")
+	}
+
 	// In dev mode, start server in background and set URL/token
 	if *dev {
 		// Use random high port (49152-65535)
-		rand.Seed(time.Now().UnixNano())
 		port := rand.Intn(65535-49152) + 49152
 		devToken := core.GenerateDevToken()
 		os.Setenv("WSS_AUTH_TOKEN", devToken)

@@ -5,11 +5,13 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"os"
 	"os/exec"
 	"sync"
+	"sync/atomic"
+
+	"flyssh/core/log"
 
 	"github.com/creack/pty"
 	"golang.org/x/net/websocket"
@@ -24,9 +26,10 @@ func GenerateDevToken() string {
 
 // Server represents a WebSocket server that handles PTY connections
 type Server struct {
-	port int
-	mux  *http.ServeMux
-	ptys sync.Map // map[string]*os.File to track PTYs by session
+	port         int
+	mux          *http.ServeMux
+	ptys         sync.Map // map[string]*os.File to track PTYs by session
+	sessionCount uint64   // atomic counter for session IDs
 }
 
 // NewServer creates a new server instance
@@ -49,7 +52,7 @@ func (s *Server) Start() error {
 
 	// Start HTTP server
 	addr := fmt.Sprintf(":%d", s.port)
-	log.Printf("Starting WebSocket server on %s", addr)
+	log.Info.Printf("Starting WebSocket server on %s", addr)
 	// nosemgrep: no-direct-http - Server runs behind TLS-terminating reverse proxy
 	return http.ListenAndServe(addr, s.mux)
 }
@@ -64,20 +67,20 @@ func (s *Server) withAuth(handler http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		expectedToken := os.Getenv("WSS_AUTH_TOKEN")
 		if expectedToken == "" {
-			log.Printf("WSS_AUTH_TOKEN not set")
+			log.Info.Printf("WSS_AUTH_TOKEN not set")
 			http.Error(w, "Server configuration error", http.StatusInternalServerError)
 			return
 		}
 
 		token := r.URL.Query().Get("token")
 		if token == "" {
-			log.Printf("Missing token from %s", r.RemoteAddr)
+			log.Info.Printf("Missing token from %s", r.RemoteAddr)
 			http.Error(w, "Missing auth token", http.StatusUnauthorized)
 			return
 		}
 
 		if token != expectedToken {
-			log.Printf("Invalid token from %s", r.RemoteAddr)
+			log.Info.Printf("Invalid token from %s", r.RemoteAddr)
 			http.Error(w, "Invalid auth token", http.StatusUnauthorized)
 			return
 		}
@@ -88,10 +91,13 @@ func (s *Server) withAuth(handler http.Handler) http.Handler {
 
 // handleConnection handles a new WebSocket connection
 func (s *Server) handleConnection(ws *websocket.Conn) {
-	log.Printf("New connection from %s", ws.RemoteAddr())
+	// Generate session ID
+	sessionID := fmt.Sprintf("#%d", atomic.AddUint64(&s.sessionCount, 1))
 
-	// Generate unique session ID
-	sessionID := GenerateDevToken()
+	// Get connection details
+	remoteAddr := ws.Request().RemoteAddr
+	localAddr := ws.Request().Host
+	log.Info.Printf("New connection %s from %s to %s", sessionID, remoteAddr, localAddr)
 
 	// Send session ID to client
 	if err := websocket.JSON.Send(ws, struct {
@@ -101,7 +107,7 @@ func (s *Server) handleConnection(ws *websocket.Conn) {
 		Type:      "session",
 		SessionID: sessionID,
 	}); err != nil {
-		log.Printf("Failed to send session ID: %v", err)
+		log.Info.Printf("Failed to send session ID: %v", err)
 		return
 	}
 
@@ -121,7 +127,7 @@ func (s *Server) handleConnection(ws *websocket.Conn) {
 	// Create PTY
 	ptmx, err := pty.Start(cmd)
 	if err != nil {
-		log.Printf("Failed to start PTY: %v", err)
+		log.Info.Printf("Failed to start PTY: %v", err)
 		ws.Close()
 		return
 	}
@@ -146,7 +152,7 @@ func (s *Server) handleConnection(ws *websocket.Conn) {
 			n, err := ws.Read(buf)
 			if err != nil {
 				if err != io.EOF && !isConnectionClosed(err) {
-					log.Printf("WebSocket read error: %v", err)
+					log.Debug.Printf("WebSocket read error %s on %s->%s: %v", sessionID, remoteAddr, localAddr, err)
 				}
 				cmd.Process.Kill()
 				return
@@ -154,7 +160,7 @@ func (s *Server) handleConnection(ws *websocket.Conn) {
 			if n > 0 {
 				if _, err := ptmx.Write(buf[:n]); err != nil {
 					if err != io.EOF {
-						log.Printf("PTY write error: %v", err)
+						log.Debug.Printf("PTY write error %s on %s->%s: %v", sessionID, remoteAddr, localAddr, err)
 					}
 					cmd.Process.Kill()
 					return
@@ -169,14 +175,14 @@ func (s *Server) handleConnection(ws *websocket.Conn) {
 		n, err := ptmx.Read(buf)
 		if err != nil {
 			if err != io.EOF {
-				log.Printf("PTY read error: %v", err)
+				log.Debug.Printf("PTY read error %s on %s->%s: %v", sessionID, remoteAddr, localAddr, err)
 			}
 			return
 		}
 		if n > 0 {
 			if _, err := ws.Write(buf[:n]); err != nil {
 				if err != io.EOF && !isConnectionClosed(err) {
-					log.Printf("WebSocket write error: %v", err)
+					log.Debug.Printf("WebSocket write error %s on %s->%s: %v", sessionID, remoteAddr, localAddr, err)
 				}
 				return
 			}
@@ -193,21 +199,45 @@ func isConnectionClosed(err error) bool {
 
 // handleControl handles control messages like window resizing
 func (s *Server) handleControl(ws *websocket.Conn) {
-	log.Printf("New control connection from %s", ws.RemoteAddr())
+	remoteAddr := ws.Request().RemoteAddr
+	localAddr := ws.Request().Host
 
-	for {
-		var msg struct {
-			Type      string `json:"type"`
-			SessionID string `json:"session_id"`
-			Data      struct {
-				Rows uint16 `json:"rows"`
-				Cols uint16 `json:"cols"`
-			} `json:"data"`
+	// Wait for first message to get session ID
+	var msg struct {
+		Type      string `json:"type"`
+		SessionID string `json:"session_id"`
+		Data      struct {
+			Rows uint16 `json:"rows"`
+			Cols uint16 `json:"cols"`
+		} `json:"data"`
+	}
+
+	if err := websocket.JSON.Receive(ws, &msg); err != nil {
+		if err != io.EOF {
+			log.Debug.Printf("Control message error: %v", err)
 		}
+		return
+	}
 
+	log.Info.Printf("New control connection %s from %s to %s\n", msg.SessionID, remoteAddr, localAddr)
+
+	// Handle first message
+	if msg.Type == "resize" {
+		if ptmx, ok := s.ptys.Load(msg.SessionID); ok {
+			if err := pty.Setsize(ptmx.(*os.File), &pty.Winsize{
+				Rows: msg.Data.Rows,
+				Cols: msg.Data.Cols,
+			}); err != nil {
+				log.Debug.Printf("Failed to resize PTY %s: %v", msg.SessionID, err)
+			}
+		}
+	}
+
+	// Handle subsequent messages
+	for {
 		if err := websocket.JSON.Receive(ws, &msg); err != nil {
 			if err != io.EOF {
-				log.Printf("Control message error: %v", err)
+				log.Debug.Printf("Control message error %s: %v", msg.SessionID, err)
 			}
 			return
 		}
@@ -218,7 +248,7 @@ func (s *Server) handleControl(ws *websocket.Conn) {
 					Rows: msg.Data.Rows,
 					Cols: msg.Data.Cols,
 				}); err != nil {
-					log.Printf("Failed to resize PTY: %v", err)
+					log.Debug.Printf("Failed to resize PTY %s: %v", msg.SessionID, err)
 				}
 			}
 		}

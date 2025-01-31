@@ -2,17 +2,20 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"os"
 
 	"flyssh/cmd/flyssh/commands"
+	wsslog "flyssh/core/log"
 )
 
 func main() {
+	// Initialize logging
+	wsslog.Init()
+
 	if len(os.Args) < 2 {
 		fmt.Println("Usage:")
-		fmt.Println("  flyssh server [-port PORT] [-dev]")
-		fmt.Println("  flyssh client [-url WS_URL] [-token TOKEN] [-dev]")
+		fmt.Println("  flyssh server [-port PORT] [-dev] [-debug]")
+		fmt.Println("  flyssh client [-url WS_URL] [-token TOKEN] [-dev] [-debug]")
 		os.Exit(1)
 	}
 
@@ -28,6 +31,6 @@ func main() {
 	}
 
 	if err != nil {
-		log.Fatal(err)
+		wsslog.Info.Fatal(err)
 	}
 }
