@@ -1,0 +1,78 @@
+{
+  "name": "flyssh",
+  "displayName": "FlySsh",
+  "description": "Connect to remote development environments through WebSocket",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "extensionDependencies": [
+    "ms-vscode-remote.remote-ssh"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "flyssh.configure",
+        "title": "Configure FlySsh Connection"
+      }
+    ],
+    "walkthroughs": [
+      {
+        "id": "flyssh.setup",
+        "title": "Connect to Fly Dev Machine",
+        "description": "Get started with remote development on Fly",
+        "steps": [
+          {
+            "id": "flyssh.configure.step",
+            "title": "Connect to Dev Machine",
+            "description": "Configure your remote development environment",
+            "media": {
+              "image": "resources/connect.png",
+              "altText": "Connect to Fly Dev Machine"
+            },
+            "completionEvents": [
+              "onCommand:flyssh.configure"
+            ],
+            "button": {
+              "text": "Connect Now",
+              "command": "flyssh.configure"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src --ext ts",
+    "test": "node ./out/test/runTest.js",
+    "test:unit": "mocha --ui tdd ./out/test/suite/extension.test.js",
+    "test:integration": "node ./out/test/runTest.js"
+  },
+  "devDependencies": {
+    "@types/glob": "^8.1.0",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "18.x",
+    "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^6.15.0",
+    "@typescript-eslint/parser": "^6.15.0",
+    "@vscode/test-electron": "^2.4.1",
+    "eslint": "^8.56.0",
+    "glob": "^11.0.1",
+    "mocha": "^11.1.0",
+    "typescript": "^5.3.3"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}
