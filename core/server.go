@@ -30,6 +30,7 @@ type Server struct {
 	mux          *http.ServeMux
 	ptys         sync.Map // map[string]*os.File to track PTYs by session
 	sessionCount uint64   // atomic counter for session IDs
+	server       *http.Server
 }
 
 // NewServer creates a new server instance
@@ -44,22 +45,14 @@ func NewServer(port int) *Server {
 
 // Start starts the WebSocket server
 func (s *Server) Start() error {
-	// Set up WebSocket handlers with auth wrapper
-	dataHandler := websocket.Handler(s.handleConnection)
-	controlHandler := websocket.Handler(s.handleControl)
-	s.mux.Handle("/", s.withAuth(dataHandler))
-	s.mux.Handle("/control", s.withAuth(controlHandler))
+	// Set up WebSocket handler with auth wrapper
+	s.mux.Handle("/", s.withAuth(websocket.Handler(s.handleConnection)))
 
 	// Start HTTP server
 	addr := fmt.Sprintf(":%d", s.port)
 	log.Info.Printf("Starting WebSocket server on %s", addr)
-	// nosemgrep: no-direct-http - Server runs behind TLS-terminating reverse proxy
-	return http.ListenAndServe(addr, s.mux)
-}
-
-// Stop stops the server
-func (s *Server) Stop() {
-	// Nothing to do yet, but keeping for future use
+	s.server = &http.Server{Addr: addr, Handler: s.mux}
+	return s.server.ListenAndServe()
 }
 
 // withAuth wraps a handler with token authentication
@@ -111,11 +104,11 @@ func (s *Server) handleConnection(ws *websocket.Conn) {
 		return
 	}
 
-	// Start a new shell like an SSH server would:
-	// 1. Using /bin/sh as the system shell
-	// 2. Setting a minimal, controlled environment
-	// 3. Matching standard SSH server behavior
-	cmd := exec.Command("/bin/sh") // nosemgrep: no-system-exec
+	// Start a new shell using /bin/sh
+	// This is intentionally using a basic shell for PTY functionality
+	// The shell is isolated with restricted PATH and HOME=/tmp for security
+	// nosemgrep: no-system-exec
+	cmd := exec.Command("/bin/sh")
 	cmd.Env = []string{
 		"TERM=xterm",
 		"PATH=/usr/local/bin:/usr/bin:/bin",
@@ -136,58 +129,29 @@ func (s *Server) handleConnection(ws *websocket.Conn) {
 		s.ptys.Delete(sessionID)
 	}()
 
-	// Store PTY for resize handling
+	// Store PTY for future use (e.g., file upload channel)
 	s.ptys.Store(sessionID, ptmx)
 
-	// Set initial size to something reasonable
-	pty.Setsize(ptmx, &pty.Winsize{
-		Rows: 24,
-		Cols: 80,
-	})
+	// Forward data in both directions
+	errc := make(chan error, 1)
 
-	// Copy WebSocket -> PTY
-	go func(ptmx *os.File, ws *websocket.Conn, cmd *exec.Cmd) {
-		buf := make([]byte, 32*1024)
-		for {
-			n, err := ws.Read(buf)
-			if err != nil {
-				if err != io.EOF && !isConnectionClosed(err) {
-					log.Debug.Printf("WebSocket read error %s on %s->%s: %v", sessionID, remoteAddr, localAddr, err)
-				}
-				cmd.Process.Kill()
-				return
-			}
-			if n > 0 {
-				if _, err := ptmx.Write(buf[:n]); err != nil {
-					if err != io.EOF {
-						log.Debug.Printf("PTY write error %s on %s->%s: %v", sessionID, remoteAddr, localAddr, err)
-					}
-					cmd.Process.Kill()
-					return
-				}
-			}
-		}
-	}(ptmx, ws, cmd)
+	// Terminal -> PTY
+	go func(ptmx *os.File, ws *websocket.Conn) {
+		_, err := io.Copy(ptmx, ws)
+		errc <- err
+	}(ptmx, ws)
 
-	// Copy PTY -> WebSocket
-	buf := make([]byte, 32*1024)
-	for {
-		n, err := ptmx.Read(buf)
-		if err != nil {
-			if err != io.EOF {
-				log.Debug.Printf("PTY read error %s on %s->%s: %v", sessionID, remoteAddr, localAddr, err)
-			}
-			return
-		}
-		if n > 0 {
-			if _, err := ws.Write(buf[:n]); err != nil {
-				if err != io.EOF && !isConnectionClosed(err) {
-					log.Debug.Printf("WebSocket write error %s on %s->%s: %v", sessionID, remoteAddr, localAddr, err)
-				}
-				return
-			}
-		}
+	// PTY -> Terminal
+	go func(ws *websocket.Conn, ptmx *os.File) {
+		_, err := io.Copy(ws, ptmx)
+		errc <- err
+	}(ws, ptmx)
+
+	// Wait for either direction to finish
+	if err := <-errc; err != nil && err != io.EOF && !isConnectionClosed(err) {
+		log.Debug.Printf("IO error %s: %v", sessionID, err)
 	}
+	log.Info.Printf("Connection closed %s", sessionID)
 }
 
 // isConnectionClosed checks if an error is due to normal connection closure
@@ -197,60 +161,9 @@ func isConnectionClosed(err error) bool {
 		err.Error() == "websocket: close 1000 (normal)"
 }
 
-// handleControl handles control messages like window resizing
-func (s *Server) handleControl(ws *websocket.Conn) {
-	remoteAddr := ws.Request().RemoteAddr
-	localAddr := ws.Request().Host
-
-	// Wait for first message to get session ID
-	var msg struct {
-		Type      string `json:"type"`
-		SessionID string `json:"session_id"`
-		Data      struct {
-			Rows uint16 `json:"rows"`
-			Cols uint16 `json:"cols"`
-		} `json:"data"`
-	}
-
-	if err := websocket.JSON.Receive(ws, &msg); err != nil {
-		if err != io.EOF {
-			log.Debug.Printf("Control message error: %v", err)
-		}
-		return
-	}
-
-	log.Info.Printf("New control connection %s from %s to %s\n", msg.SessionID, remoteAddr, localAddr)
-
-	// Handle first message
-	if msg.Type == "resize" {
-		if ptmx, ok := s.ptys.Load(msg.SessionID); ok {
-			if err := pty.Setsize(ptmx.(*os.File), &pty.Winsize{
-				Rows: msg.Data.Rows,
-				Cols: msg.Data.Cols,
-			}); err != nil {
-				log.Debug.Printf("Failed to resize PTY %s: %v", msg.SessionID, err)
-			}
-		}
-	}
-
-	// Handle subsequent messages
-	for {
-		if err := websocket.JSON.Receive(ws, &msg); err != nil {
-			if err != io.EOF {
-				log.Debug.Printf("Control message error %s: %v", msg.SessionID, err)
-			}
-			return
-		}
-
-		if msg.Type == "resize" {
-			if ptmx, ok := s.ptys.Load(msg.SessionID); ok {
-				if err := pty.Setsize(ptmx.(*os.File), &pty.Winsize{
-					Rows: msg.Data.Rows,
-					Cols: msg.Data.Cols,
-				}); err != nil {
-					log.Debug.Printf("Failed to resize PTY %s: %v", msg.SessionID, err)
-				}
-			}
-		}
+// Stop gracefully shuts down the server
+func (s *Server) Stop() {
+	if s.server != nil {
+		s.server.Close()
 	}
 }
