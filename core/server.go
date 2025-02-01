@@ -4,10 +4,14 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"log"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
+	"sync"
+	"sync/atomic"
+
+	"flyssh/core/log"
 
 	"github.com/creack/pty"
 	"golang.org/x/net/websocket"
@@ -22,8 +26,11 @@ func GenerateDevToken() string {
 
 // Server represents a WebSocket server that handles PTY connections
 type Server struct {
-	port int
-	mux  *http.ServeMux
+	port         int
+	mux          *http.ServeMux
+	ptys         sync.Map // map[string]*os.File to track PTYs by session
+	sessionCount uint64   // atomic counter for session IDs
+	server       *http.Server
 }
 
 // NewServer creates a new server instance
@@ -32,25 +39,20 @@ func NewServer(port int) *Server {
 	return &Server{
 		port: port,
 		mux:  mux,
+		ptys: sync.Map{},
 	}
 }
 
 // Start starts the WebSocket server
 func (s *Server) Start() error {
 	// Set up WebSocket handler with auth wrapper
-	wsHandler := websocket.Handler(s.handleConnection)
-	s.mux.Handle("/", s.withAuth(wsHandler))
+	s.mux.Handle("/", s.withAuth(websocket.Handler(s.handleConnection)))
 
 	// Start HTTP server
 	addr := fmt.Sprintf(":%d", s.port)
-	log.Printf("Starting WebSocket server on %s", addr)
-	// nosemgrep: no-direct-http - Server runs behind TLS-terminating reverse proxy
-	return http.ListenAndServe(addr, s.mux)
-}
-
-// Stop stops the server
-func (s *Server) Stop() {
-	// Nothing to do yet, but keeping for future use
+	log.Info.Printf("Starting WebSocket server on %s", addr)
+	s.server = &http.Server{Addr: addr, Handler: s.mux}
+	return s.server.ListenAndServe()
 }
 
 // withAuth wraps a handler with token authentication
@@ -58,20 +60,20 @@ func (s *Server) withAuth(handler http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		expectedToken := os.Getenv("WSS_AUTH_TOKEN")
 		if expectedToken == "" {
-			log.Printf("WSS_AUTH_TOKEN not set")
+			log.Info.Printf("WSS_AUTH_TOKEN not set")
 			http.Error(w, "Server configuration error", http.StatusInternalServerError)
 			return
 		}
 
 		token := r.URL.Query().Get("token")
 		if token == "" {
-			log.Printf("Missing token from %s", r.RemoteAddr)
+			log.Info.Printf("Missing token from %s", r.RemoteAddr)
 			http.Error(w, "Missing auth token", http.StatusUnauthorized)
 			return
 		}
 
 		if token != expectedToken {
-			log.Printf("Invalid token from %s", r.RemoteAddr)
+			log.Info.Printf("Invalid token from %s", r.RemoteAddr)
 			http.Error(w, "Invalid auth token", http.StatusUnauthorized)
 			return
 		}
@@ -82,80 +84,86 @@ func (s *Server) withAuth(handler http.Handler) http.Handler {
 
 // handleConnection handles a new WebSocket connection
 func (s *Server) handleConnection(ws *websocket.Conn) {
-	log.Printf("New connection from %s", ws.RemoteAddr())
+	// Generate session ID
+	sessionID := fmt.Sprintf("#%d", atomic.AddUint64(&s.sessionCount, 1))
 
-	// Start a new shell like an SSH server would:
-	// 1. Using /bin/sh as the system shell
-	// 2. Setting a minimal, controlled environment
-	// 3. Matching standard SSH server behavior
-	cmd := exec.Command("/bin/sh") // nosemgrep: no-system-exec
+	// Get connection details
+	remoteAddr := ws.Request().RemoteAddr
+	localAddr := ws.Request().Host
+	log.Info.Printf("New connection %s from %s to %s", sessionID, remoteAddr, localAddr)
+
+	// Send session ID to client
+	if err := websocket.JSON.Send(ws, struct {
+		Type      string `json:"type"`
+		SessionID string `json:"session_id"`
+	}{
+		Type:      "session",
+		SessionID: sessionID,
+	}); err != nil {
+		log.Info.Printf("Failed to send session ID: %v", err)
+		return
+	}
+
+	// Start a new shell using /bin/sh
+	// This is intentionally using a basic shell for PTY functionality
+	// The shell is isolated with restricted PATH and HOME=/tmp for security
+	// nosemgrep: no-system-exec
+	cmd := exec.Command("/bin/sh")
 	cmd.Env = []string{
-		"TERM=dumb",
+		"TERM=xterm",
 		"PATH=/usr/local/bin:/usr/bin:/bin",
 		"HOME=/tmp",
 		"SHELL=/bin/sh",
-		"PS1=$ ",
+		"PS1=\\$ ",
 	}
 
 	// Create PTY
 	ptmx, err := pty.Start(cmd)
 	if err != nil {
-		log.Printf("Failed to start PTY: %v", err)
+		log.Info.Printf("Failed to start PTY: %v", err)
 		ws.Close()
 		return
 	}
-	defer ptmx.Close()
+	defer func() {
+		ptmx.Close()
+		s.ptys.Delete(sessionID)
+	}()
 
-	// Handle resize messages
-	go func(ptmx *os.File, ws *websocket.Conn, cmd *exec.Cmd) {
-		for {
-			var msg struct {
-				Type string `json:"type"`
-				Data struct {
-					Rows uint16 `json:"rows"`
-					Cols uint16 `json:"cols"`
-				} `json:"data"`
-			}
+	// Store PTY for future use (e.g., file upload channel)
+	s.ptys.Store(sessionID, ptmx)
 
-			if err := websocket.JSON.Receive(ws, &msg); err != nil {
-				cmd.Process.Kill()
-				return
-			}
+	// Forward data in both directions
+	errc := make(chan error, 1)
 
-			if msg.Type == "resize" {
-				pty.Setsize(ptmx, &pty.Winsize{
-					Rows: msg.Data.Rows,
-					Cols: msg.Data.Cols,
-				})
-			}
-		}
-	}(ptmx, ws, cmd)
+	// Terminal -> PTY
+	go func(ptmx *os.File, ws *websocket.Conn) {
+		_, err := io.Copy(ptmx, ws)
+		errc <- err
+	}(ptmx, ws)
 
-	// Copy WebSocket -> PTY
-	go func(ptmx *os.File, ws *websocket.Conn, cmd *exec.Cmd) {
-		buf := make([]byte, 32*1024)
-		for {
-			n, err := ws.Read(buf)
-			if err != nil {
-				cmd.Process.Kill()
-				return
-			}
-			if _, err := ptmx.Write(buf[:n]); err != nil {
-				cmd.Process.Kill()
-				return
-			}
-		}
-	}(ptmx, ws, cmd)
+	// PTY -> Terminal
+	go func(ws *websocket.Conn, ptmx *os.File) {
+		_, err := io.Copy(ws, ptmx)
+		errc <- err
+	}(ws, ptmx)
 
-	// Copy PTY -> WebSocket
-	buf := make([]byte, 32*1024)
-	for {
-		n, err := ptmx.Read(buf)
-		if err != nil {
-			return
-		}
-		if _, err := ws.Write(buf[:n]); err != nil {
-			return
-		}
+	// Wait for either direction to finish
+	if err := <-errc; err != nil && err != io.EOF && !isConnectionClosed(err) {
+		log.Debug.Printf("IO error %s: %v", sessionID, err)
+	}
+	log.Info.Printf("Connection closed %s", sessionID)
+}
+
+// isConnectionClosed checks if an error is due to normal connection closure
+func isConnectionClosed(err error) bool {
+	return err.Error() == "use of closed network connection" ||
+		err.Error() == "EOF" ||
+		err.Error() == "websocket: close 1000 (normal)"
+}
+
+// Stop gracefully shuts down the server
+func (s *Server) Stop() {
+	if s.server != nil {
+		s.server.Close()
 	}
 }

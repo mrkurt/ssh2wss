@@ -1,56 +1,36 @@
 package main
 
 import (
-	"flag"
 	"fmt"
-	"log"
 	"os"
 
-	"flyssh/core"
+	"flyssh/cmd/flyssh/commands"
+	wsslog "flyssh/core/log"
 )
 
 func main() {
+	// Initialize logging
+	wsslog.Init()
+
 	if len(os.Args) < 2 {
 		fmt.Println("Usage:")
-		fmt.Println("  flyssh server [-port PORT]")
-		fmt.Println("  flyssh client -url WS_URL")
+		fmt.Println("  flyssh server [-port PORT] [-dev] [-debug]")
+		fmt.Println("  flyssh client [-url WS_URL] [-token TOKEN] [-dev] [-debug]")
 		os.Exit(1)
 	}
 
+	var err error
 	switch os.Args[1] {
 	case "server":
-		// Parse server flags
-		cmd := flag.NewFlagSet("server", flag.ExitOnError)
-		port := cmd.Int("port", 8081, "Port to listen on")
-		cmd.Parse(os.Args[2:])
-
-		// Start server
-		s := core.NewServer(*port)
-		log.Printf("Starting WebSocket server on :%d", *port)
-		if err := s.Start(); err != nil {
-			log.Fatalf("Server error: %v", err)
-		}
-
+		err = commands.ServerCommand(os.Args[2:])
 	case "client":
-		// Parse client flags
-		cmd := flag.NewFlagSet("client", flag.ExitOnError)
-		url := cmd.String("url", "", "WebSocket URL to connect to (e.g. ws://localhost:8081)")
-		cmd.Parse(os.Args[2:])
-
-		if *url == "" {
-			fmt.Println("Error: -url is required")
-			cmd.PrintDefaults()
-			os.Exit(1)
-		}
-
-		// Start client
-		c := core.NewClient(*url, os.Getenv("WSS_AUTH_TOKEN"))
-		if err := c.Connect(); err != nil {
-			log.Fatalf("Client error: %v", err)
-		}
-
+		err = commands.ClientCommand(os.Args[2:])
 	default:
 		fmt.Printf("Unknown command: %s\n", os.Args[1])
 		os.Exit(1)
+	}
+
+	if err != nil {
+		wsslog.Info.Fatal(err)
 	}
 }

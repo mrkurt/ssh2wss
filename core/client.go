@@ -5,6 +5,8 @@ import (
 	"io"
 	"os"
 
+	"flyssh/core/log"
+
 	"golang.org/x/net/websocket"
 	"golang.org/x/term"
 )
@@ -15,6 +17,7 @@ type Client struct {
 	authToken string
 	stdin     io.Reader
 	stdout    io.Writer
+	sessionID string
 }
 
 // NewClient creates a new terminal client
@@ -44,45 +47,52 @@ func (c *Client) Connect() error {
 	}
 	defer ws.Close()
 
-	// Set up terminal if stdin is a real terminal
-	var oldState *term.State
-	if f, ok := c.stdin.(*os.File); ok {
-		fd := int(f.Fd())
-		if term.IsTerminal(fd) {
-			oldState, err = term.MakeRaw(fd)
-			if err != nil {
-				return fmt.Errorf("failed to set up terminal: %v", err)
-			}
-			defer term.Restore(fd, oldState)
+	log.Debug.Printf("Connected to server at %s", ws.RemoteAddr())
 
-			// Set up window resize handling (platform-specific)
-			c.setupWindowResize(ws, fd)
+	// Wait for session ID
+	var msg struct {
+		Type      string `json:"type"`
+		SessionID string `json:"session_id"`
+	}
+	if err := websocket.JSON.Receive(ws, &msg); err != nil {
+		return fmt.Errorf("failed to receive session ID: %v", err)
+	}
+	if msg.Type != "session" {
+		return fmt.Errorf("expected session message, got %s", msg.Type)
+	}
+	c.sessionID = msg.SessionID
+
+	log.Debug.Printf("Session established %s with %s", c.sessionID, ws.RemoteAddr())
+
+	// Put terminal in raw mode if it's a real terminal
+	if f, ok := c.stdin.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
+		oldState, err := term.MakeRaw(int(f.Fd()))
+		if err != nil {
+			return fmt.Errorf("failed to set up terminal: %v", err)
 		}
+		defer term.Restore(int(f.Fd()), oldState)
 	}
 
-	// Handle bidirectional copying using the standard Go pattern for
-	// terminal/network IO. This pattern:
-	// 1. Uses separate goroutines for each direction to prevent blocking
-	// 2. Returns when either direction fails/closes (using errc channel)
-	// 3. Matches the approach used in Go's crypto/ssh and other packages
+	// Forward data in both directions
 	errc := make(chan error, 1)
 
-	// Copy stdin to websocket
-	go func(ws *websocket.Conn, stdin io.Reader, errc chan<- error) {
+	// stdin -> WebSocket
+	go func(ws *websocket.Conn, stdin io.Reader) {
 		_, err := io.Copy(ws, stdin)
 		errc <- err
-	}(ws, c.stdin, errc)
+	}(ws, c.stdin)
 
-	// Copy websocket to stdout
-	go func(ws *websocket.Conn, stdout io.Writer, errc chan<- error) {
+	// WebSocket -> stdout
+	go func(stdout io.Writer, ws *websocket.Conn) {
 		_, err := io.Copy(stdout, ws)
 		errc <- err
-	}(ws, c.stdout, errc)
+	}(c.stdout, ws)
 
-	// Wait for either direction to finish and return
-	// We only care about non-EOF errors
+	// Wait for either direction to finish
 	if err := <-errc; err != nil && err != io.EOF {
+		log.Debug.Printf("IO error %s with %s: %v", c.sessionID, ws.RemoteAddr(), err)
 		return fmt.Errorf("IO error: %v", err)
 	}
+	log.Debug.Printf("Connection closed %s with %s", c.sessionID, ws.RemoteAddr())
 	return nil
 }
