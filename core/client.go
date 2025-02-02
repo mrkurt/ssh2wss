@@ -35,6 +35,13 @@ type Client struct {
 // NewClient creates a new terminal client
 func NewClient(url string, authToken string) *Client {
 	// Create H2 client with timeouts
+	// This client has all necessary timeouts configured:
+	// - Overall request timeout: 60s (matching Fly.io's limit)
+	// - Dial timeout: 10s
+	// - Keep-alive interval: 15s
+	// - Read idle timeout: 60s
+	// - Write byte timeout: 15s
+	// - Ping timeout: 15s
 	client := &http.Client{
 		Timeout: 60 * time.Second, // Overall timeout
 		Transport: &http2.Transport{
@@ -68,7 +75,7 @@ func (c *Client) SetIO(stdin io.Reader, stdout io.Writer) {
 }
 
 // Connect establishes an H2 connection and starts the terminal session
-func (c *Client) Connect() error {
+func (c *Client) Connect(ctx context.Context) error {
 	// Put terminal in raw mode if it's a real terminal
 	if f, ok := c.stdin.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
 		oldState, err := term.MakeRaw(int(f.Fd()))
@@ -107,7 +114,7 @@ func (c *Client) Connect() error {
 	}()
 
 	// Create request with context for keepalive
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), pr)
@@ -116,7 +123,10 @@ func (c *Client) Connect() error {
 	}
 
 	// Start keepalive goroutine
-	go func() {
+	keepaliveURL := *u
+	keepaliveURL.Path = "/ping"
+	keepaliveClient := c.client // Capture client reference
+	go func(ctx context.Context, url url.URL, client *http.Client) {
 		ticker := time.NewTicker(15 * time.Second)
 		defer ticker.Stop()
 
@@ -126,14 +136,12 @@ func (c *Client) Connect() error {
 				return
 			case <-ticker.C:
 				// Send a ping by making a HEAD request to /ping
-				pingURL := *u
-				pingURL.Path = "/ping"
-				pingReq, err := http.NewRequestWithContext(ctx, http.MethodHead, pingURL.String(), nil)
+				pingReq, err := http.NewRequestWithContext(ctx, http.MethodHead, url.String(), nil)
 				if err != nil {
 					log.Debug.Printf("Failed to create ping request: %v", err)
 					continue
 				}
-				resp, err := c.client.Do(pingReq)
+				resp, err := client.Do(pingReq)
 				if err != nil {
 					log.Debug.Printf("Failed to send ping: %v", err)
 					continue
@@ -141,7 +149,7 @@ func (c *Client) Connect() error {
 				resp.Body.Close()
 			}
 		}
-	}()
+	}(ctx, keepaliveURL, keepaliveClient)
 
 	// Send request
 	resp, err := c.client.Do(req)
