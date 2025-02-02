@@ -15,7 +15,6 @@ import (
 
 	"flyssh/core/log"
 
-	"github.com/creack/pty"
 	"golang.org/x/net/http2"
 	"golang.org/x/term"
 )
@@ -192,7 +191,7 @@ func (c *Client) handleWindowChanges(ch chan os.Signal) {
 
 // sendWindowSize sends the current window size to the server
 func (c *Client) sendWindowSize() error {
-	ws, err := pty.GetsizeFull(os.Stdin)
+	rows, cols, xpixels, ypixels, err := c.getWindowSize()
 	if err != nil {
 		return fmt.Errorf("failed to get window size: %v", err)
 	}
@@ -219,10 +218,10 @@ func (c *Client) sendWindowSize() error {
 		XPixels uint16 `json:"x_pixels"`
 		YPixels uint16 `json:"y_pixels"`
 	}{
-		Rows:    ws.Rows,
-		Cols:    ws.Cols,
-		XPixels: ws.X,
-		YPixels: ws.Y,
+		Rows:    rows,
+		Cols:    cols,
+		XPixels: xpixels,
+		YPixels: ypixels,
 	}
 	jsonBody, err := json.Marshal(body)
 	if err != nil {

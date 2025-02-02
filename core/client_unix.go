@@ -4,12 +4,14 @@
 package core
 
 import (
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"flyssh/core/log"
 
+	"github.com/creack/pty"
 	"golang.org/x/net/websocket"
 	"golang.org/x/term"
 )
@@ -46,4 +48,13 @@ func (c *Client) setupWindowSizeHandler() {
 	if err := c.sendWindowSize(); err != nil {
 		log.Debug.Printf("Failed to send initial window size: %v", err)
 	}
+}
+
+// getWindowSize gets the current window size on Unix systems
+func (c *Client) getWindowSize() (rows, cols, xpixels, ypixels uint16, err error) {
+	ws, err := pty.GetsizeFull(os.Stdin)
+	if err != nil {
+		return 0, 0, 0, 0, fmt.Errorf("failed to get window size: %v", err)
+	}
+	return ws.Rows, ws.Cols, ws.X, ws.Y, nil
 }
