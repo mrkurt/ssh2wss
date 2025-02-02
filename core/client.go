@@ -2,6 +2,7 @@ package core
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"flyssh/core/log"
 
@@ -32,13 +34,21 @@ type Client struct {
 
 // NewClient creates a new terminal client
 func NewClient(url string, authToken string) *Client {
-	// Create H2 client
+	// Create H2 client with timeouts
 	client := &http.Client{
+		Timeout: 60 * time.Second, // Overall timeout
 		Transport: &http2.Transport{
 			AllowHTTP: true,
 			DialTLS: func(network, addr string, cfg *tls.Config) (net.Conn, error) {
-				return net.Dial(network, addr)
+				dialer := &net.Dialer{
+					Timeout:   10 * time.Second,
+					KeepAlive: 15 * time.Second,
+				}
+				return dialer.Dial(network, addr)
 			},
+			ReadIdleTimeout:  60 * time.Second,
+			PingTimeout:      15 * time.Second,
+			WriteByteTimeout: 15 * time.Second,
 		},
 	}
 
@@ -96,11 +106,42 @@ func (c *Client) Connect() error {
 		pw.Close()
 	}()
 
-	// Create request
-	req, err := http.NewRequest(http.MethodPost, u.String(), pr)
+	// Create request with context for keepalive
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), pr)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %v", err)
 	}
+
+	// Start keepalive goroutine
+	go func() {
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				// Send a ping by making a HEAD request to /ping
+				pingURL := *u
+				pingURL.Path = "/ping"
+				pingReq, err := http.NewRequestWithContext(ctx, http.MethodHead, pingURL.String(), nil)
+				if err != nil {
+					log.Debug.Printf("Failed to create ping request: %v", err)
+					continue
+				}
+				resp, err := c.client.Do(pingReq)
+				if err != nil {
+					log.Debug.Printf("Failed to send ping: %v", err)
+					continue
+				}
+				resp.Body.Close()
+			}
+		}
+	}()
 
 	// Send request
 	resp, err := c.client.Do(req)

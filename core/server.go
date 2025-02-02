@@ -49,23 +49,25 @@ func NewServer(port int) *Server {
 
 // Start starts the H2C server
 func (s *Server) Start() error {
-	// Set up handlers with auth wrapper
-	s.mux.Handle("/terminal", s.withAuth(http.HandlerFunc(s.handleTerminalStream)))
-	s.mux.Handle("/session/", s.withAuth(http.HandlerFunc(s.handleSessionControl)))
+	mux := http.NewServeMux()
 
-	// Start HTTP server with H2C support
-	addr := fmt.Sprintf(":%d", s.port)
-	log.Info.Printf("Starting H2C server on %s", addr)
+	// Add ping endpoint for keepalive
+	mux.HandleFunc("/ping", s.handlePing)
 
-	h2server := &http2.Server{}
-	handler := h2c.NewHandler(s.mux, h2server)
+	// Add terminal endpoint
+	mux.HandleFunc("/terminal", s.handleTerminalStream)
 
-	s.server = &http.Server{
-		Addr:    addr,
-		Handler: handler,
+	// Add session endpoint for window size updates
+	mux.HandleFunc("/session/", s.handleSessionControl)
+
+	// Create H2C server
+	srv := &http.Server{
+		Addr:    fmt.Sprintf(":%d", s.port),
+		Handler: h2c.NewHandler(s.withAuth(mux), &http2.Server{}),
 	}
 
-	return s.server.ListenAndServe()
+	log.Info.Printf("Starting H2C server on :%d", s.port)
+	return srv.ListenAndServe()
 }
 
 // withAuth wraps a handler with token authentication
@@ -237,4 +239,10 @@ func (s *Server) Stop() {
 	if s.server != nil {
 		s.server.Close()
 	}
+}
+
+// handlePing handles keepalive pings from clients
+func (s *Server) handlePing(w http.ResponseWriter, r *http.Request) {
+	// Just return 200 OK, the client only needs to know we're alive
+	w.WriteHeader(http.StatusOK)
 }
