@@ -40,3 +40,9 @@ func (c *Client) setupWindowResize(ws *websocket.Conn, fd int) {
 		}
 	}(ws, fd)
 }
+
+// setupWindowSizeHandler is a no-op on Windows as SIGWINCH is not available
+func (c *Client) setupWindowSizeHandler() {
+	// Windows does not support SIGWINCH
+	// Window size changes are not supported on Windows
+}

@@ -11,8 +11,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"flyssh/core/log"
@@ -171,15 +169,8 @@ func (c *Client) Connect(ctx context.Context) error {
 	}
 	c.sessionID = msg.SessionID
 
-	// Handle window size changes
-	ch := make(chan os.Signal, 1)
-	signal.Notify(ch, syscall.SIGWINCH)
-	go c.handleWindowChanges(ch)
-
-	// Send initial window size
-	if err := c.sendWindowSize(); err != nil {
-		log.Debug.Printf("Failed to send initial window size: %v", err)
-	}
+	// Set up window size handling (platform specific)
+	c.setupWindowSizeHandler()
 
 	// Copy response to stdout
 	_, err = io.Copy(c.stdout, resp.Body)

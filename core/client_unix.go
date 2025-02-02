@@ -1,5 +1,5 @@
-//go:build unix
-// +build unix
+//go:build !windows
+// +build !windows
 
 package core
 
@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+
+	"flyssh/core/log"
 
 	"golang.org/x/net/websocket"
 	"golang.org/x/term"
@@ -30,5 +32,18 @@ func (c *Client) setupWindowResize(ws *websocket.Conn, fd int) {
 	// Send initial window size
 	if width, height, err := term.GetSize(fd); err == nil {
 		sendWindowSize(ws, width, height)
+	}
+}
+
+// setupWindowSizeHandler sets up window size change handling for Unix systems
+func (c *Client) setupWindowSizeHandler() {
+	// Handle window size changes
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, syscall.SIGWINCH)
+	go c.handleWindowChanges(ch)
+
+	// Send initial window size
+	if err := c.sendWindowSize(); err != nil {
+		log.Debug.Printf("Failed to send initial window size: %v", err)
 	}
 }
