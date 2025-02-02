@@ -42,8 +42,26 @@ permissions:
 jobs:
   wait:
     runs-on: ubuntu-24.04  # Explicitly use the upcoming version
+    outputs:
+      skip: ${{ steps.check-release.outputs.skip }}
     steps:
+      - id: checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2  # Need at least 2 commits to get the message
+
+      - id: check-release
+        run: |
+          COMMIT_MSG=$(git log -1 --pretty=%B)
+          if [[ "$COMMIT_MSG" == *"[release]"* ]]; then
+            echo "Commit message contains [release], skipping wait"
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
       - id: wait
+        if: steps.check-release.outputs.skip != 'true'
         run: |
           echo "Waiting 30 minutes before checking for release..."
           sleep 1800  # 30 minutes in seconds
