@@ -3,7 +3,6 @@ package core
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -24,18 +23,18 @@ func GenerateDevToken() string {
 
 // Server represents a WebSocket server that handles PTY connections
 type Server struct {
-	port int
-	mux  *http.ServeMux
-	ptys sync.Map // map[string]*os.File to track PTYs by session
+	listenAddr string
+	mux        *http.ServeMux
+	ptys       sync.Map // map[string]*os.File to track PTYs by session
 }
 
 // NewServer creates a new server instance
-func NewServer(port int) *Server {
+func NewServer(listenAddr string) *Server {
 	mux := http.NewServeMux()
 	return &Server{
-		port: port,
-		mux:  mux,
-		ptys: sync.Map{},
+		listenAddr: listenAddr,
+		mux:        mux,
+		ptys:       sync.Map{},
 	}
 }
 
@@ -48,10 +47,9 @@ func (s *Server) Start() error {
 	s.mux.Handle("/control", s.withAuth(controlHandler))
 
 	// Start HTTP server
-	addr := fmt.Sprintf(":%d", s.port)
-	log.Printf("Starting WebSocket server on %s", addr)
+	log.Printf("Starting WebSocket server on %s", s.listenAddr)
 	// nosemgrep: no-direct-http - Server runs behind TLS-terminating reverse proxy
-	return http.ListenAndServe(addr, s.mux)
+	return http.ListenAndServe(s.listenAddr, s.mux)
 }
 
 // Stop stops the server

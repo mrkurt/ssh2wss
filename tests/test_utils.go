@@ -7,6 +7,7 @@ import (
 	"flyssh/core"
 	"fmt"
 	"io"
+	"math/rand"
 	"net"
 	"os"
 	"os/exec"
@@ -78,7 +79,8 @@ func NewTestServer(t *testing.T) *TestServer {
 	os.Setenv("WSS_AUTH_TOKEN", authToken)
 
 	// Start server
-	srv := core.NewServer(port)
+	listenAddr := fmt.Sprintf("localhost:%d", port)
+	srv := core.NewServer(listenAddr)
 	done := make(chan error, 1)
 	go func() {
 		done <- srv.Start()
@@ -233,4 +235,25 @@ func GetFreePort() (int, error) {
 	}
 	defer l.Close()
 	return l.Addr().(*net.TCPAddr).Port, nil
+}
+
+func startTestServer() (string, *core.Server, error) {
+	// Use random high port (49152-65535)
+	rand.Seed(time.Now().UnixNano())
+	port := rand.Intn(65535-49152) + 49152
+
+	// Generate test token
+	token := core.GenerateDevToken()
+	os.Setenv("WSS_AUTH_TOKEN", token)
+
+	// Start server
+	listenAddr := fmt.Sprintf("localhost:%d", port)
+	s := core.NewServer(listenAddr)
+	go s.Start()
+
+	// Wait for server to start
+	time.Sleep(100 * time.Millisecond)
+
+	url := fmt.Sprintf("ws://%s", listenAddr)
+	return url, s, nil
 }

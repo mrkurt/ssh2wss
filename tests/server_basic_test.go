@@ -26,7 +26,8 @@ func TestServerConnection(t *testing.T) {
 
 	// Set auth token
 	authToken := "test-token"
-	cmd := exec.Command(ServerBinaryPath, "server", "-port", fmt.Sprintf("%d", port))
+	listenAddr := fmt.Sprintf("localhost:%d", port)
+	cmd := exec.Command(ServerBinaryPath, "server", "--listen", listenAddr)
 	cmd.Env = append(os.Environ(), "WSS_AUTH_TOKEN="+authToken)
 
 	if err := pty.StartCommand(t, cmd); err != nil {

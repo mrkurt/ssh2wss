@@ -29,3 +29,6 @@ tmp/
 
 # Test binaries
 tests/tmp/ tmp/
+
+# other stuff
+reference/

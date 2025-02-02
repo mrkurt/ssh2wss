@@ -10,7 +10,7 @@ import (
 
 func ServerCommand(args []string) error {
 	fs := flag.NewFlagSet("server", flag.ExitOnError)
-	port := fs.Int("port", 8081, "Server port")
+	listen := fs.String("listen", "127.0.0.1:8081", "Listen address (e.g. 127.0.0.1:8081, :2222, 0.0.0.0:2222)")
 	devMode := fs.Bool("dev", false, "Run in development mode with auto-generated token")
 	fs.Parse(args)
 
@@ -19,13 +19,13 @@ func ServerCommand(args []string) error {
 		token := core.GenerateDevToken()
 		os.Setenv("WSS_AUTH_TOKEN", token)
 		fmt.Printf("\n=== Development Mode ===\n")
-		fmt.Printf("WebSocket URL: ws://localhost:%d\n", *port)
+		fmt.Printf("WebSocket URL: ws://%s\n", *listen)
 		fmt.Printf("Auth Token: %s\n", token)
 		fmt.Printf("====================\n\n")
 	}
 
 	// Create and start server
-	s := core.NewServer(*port)
+	s := core.NewServer(*listen)
 	return s.Start()
 }
 
