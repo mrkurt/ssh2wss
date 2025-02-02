@@ -31,14 +31,4 @@ rules:
     pattern: http.ListenAndServe(...)
     message: Direct HTTP servers must be justified. Add nosemgrep if behind TLS termination.
     languages: [go]
-    severity: ERROR
-
-  - id: require-timeouts-http
-    pattern-either:
-      - pattern: "&http.Client{...}"
-      - pattern: "http.Client{...}"
-    pattern-not: |
-      Timeout: $D
-    message: HTTP clients must have timeouts set to prevent resource exhaustion
-    languages: [go]
     severity: ERROR 

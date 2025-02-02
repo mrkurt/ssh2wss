@@ -2,7 +2,7 @@
 // +build unix
 
 /*
-Security Testing Guidelines for WebSocket PTY Server
+Security Testing Guidelines for H2C PTY Server
 
 Key areas to test:
 1. Authentication
@@ -12,10 +12,9 @@ Key areas to test:
    - Empty tokens
    - Special characters in tokens
 
-2. WebSocket Connection
+2. HTTP/2 Connection
    - Multiple simultaneous connections
    - Rapid connect/disconnect cycles
-   - Malformed WebSocket headers
    - Invalid protocol versions
 
 3. PTY/Shell Security
@@ -35,7 +34,10 @@ Key areas to test:
 package tests
 
 import (
+	"crypto/tls"
 	"fmt"
+	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
@@ -43,7 +45,7 @@ import (
 	"testing"
 	"time"
 
-	"golang.org/x/net/websocket"
+	"golang.org/x/net/http2"
 )
 
 func TestServerAuth(t *testing.T) {
@@ -69,6 +71,16 @@ func TestServerAuth(t *testing.T) {
 	// Wait for server to start
 	time.Sleep(500 * time.Millisecond)
 
+	// Create H2C client
+	client := &http.Client{
+		Transport: &http2.Transport{
+			AllowHTTP: true,
+			DialTLS: func(network, addr string, cfg *tls.Config) (net.Conn, error) {
+				return net.Dial(network, addr)
+			},
+		},
+	}
+
 	tests := []struct {
 		name    string
 		token   string
@@ -83,20 +95,25 @@ func TestServerAuth(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			origin := "http://localhost"
-			url := fmt.Sprintf("ws://localhost:%d?token=%s", port, url.QueryEscape(tt.token))
-			ws, err := websocket.Dial(url, "", origin)
+			u := fmt.Sprintf("http://localhost:%d/terminal?token=%s", port, url.QueryEscape(tt.token))
+			req, err := http.NewRequest(http.MethodPost, u, nil)
+			if err != nil {
+				t.Fatalf("Failed to create request: %v", err)
+			}
 
+			resp, err := client.Do(req)
 			if tt.wantErr {
-				if err == nil {
-					ws.Close()
+				if err == nil && resp.StatusCode == http.StatusOK {
+					resp.Body.Close()
 					t.Error("Expected error but got none")
 				}
 			} else {
 				if err != nil {
 					t.Errorf("Unexpected error: %v", err)
+				} else if resp.StatusCode != http.StatusOK {
+					t.Errorf("Expected status OK, got %d", resp.StatusCode)
 				} else {
-					ws.Close()
+					resp.Body.Close()
 				}
 			}
 		})

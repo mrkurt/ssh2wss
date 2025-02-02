@@ -4,13 +4,16 @@
 package tests
 
 import (
+	"crypto/tls"
 	"fmt"
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"testing"
 	"time"
 
-	"golang.org/x/net/websocket"
+	"golang.org/x/net/http2"
 )
 
 func TestServerConnection(t *testing.T) {
@@ -36,12 +39,30 @@ func TestServerConnection(t *testing.T) {
 	// Wait for server to start
 	time.Sleep(500 * time.Millisecond)
 
+	// Create H2C client
+	client := &http.Client{
+		Transport: &http2.Transport{
+			AllowHTTP: true,
+			DialTLS: func(network, addr string, cfg *tls.Config) (net.Conn, error) {
+				return net.Dial(network, addr)
+			},
+		},
+	}
+
 	// Test valid connection
-	origin := "http://localhost"
-	url := fmt.Sprintf("ws://localhost:%d?token=%s", port, authToken)
-	ws, err := websocket.Dial(url, "", origin)
+	url := fmt.Sprintf("http://localhost:%d/terminal?token=%s", port, authToken)
+	req, err := http.NewRequest(http.MethodPost, url, nil)
+	if err != nil {
+		t.Fatalf("Failed to create request: %v", err)
+	}
+
+	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	ws.Close()
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Expected status OK, got %d", resp.StatusCode)
+	}
 }

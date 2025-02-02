@@ -1,13 +1,21 @@
 package core
 
 import (
+	"bytes"
+	"context"
+	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
+	"net/url"
 	"os"
+	"time"
 
 	"flyssh/core/log"
 
-	"golang.org/x/net/websocket"
+	"golang.org/x/net/http2"
 	"golang.org/x/term"
 )
 
@@ -18,15 +26,42 @@ type Client struct {
 	stdin     io.Reader
 	stdout    io.Writer
 	sessionID string
+	client    *http.Client
 }
 
 // NewClient creates a new terminal client
 func NewClient(url string, authToken string) *Client {
+	// Create H2 client with timeouts
+	// This client has all necessary timeouts configured:
+	// - Overall request timeout: 60s (matching Fly.io's limit)
+	// - Dial timeout: 10s
+	// - Keep-alive interval: 15s
+	// - Read idle timeout: 60s
+	// - Write byte timeout: 15s
+	// - Ping timeout: 15s
+	client := &http.Client{
+		Timeout: 60 * time.Second, // Overall timeout
+		Transport: &http2.Transport{
+			AllowHTTP: true,
+			DialTLS: func(network, addr string, cfg *tls.Config) (net.Conn, error) {
+				dialer := &net.Dialer{
+					Timeout:   10 * time.Second,
+					KeepAlive: 15 * time.Second,
+				}
+				return dialer.Dial(network, addr)
+			},
+			ReadIdleTimeout:  60 * time.Second,
+			PingTimeout:      15 * time.Second,
+			WriteByteTimeout: 15 * time.Second,
+		},
+	}
+
 	return &Client{
 		url:       url,
 		authToken: authToken,
 		stdin:     os.Stdin,
 		stdout:    os.Stdout,
+		client:    client,
 	}
 }
 
@@ -36,34 +71,8 @@ func (c *Client) SetIO(stdin io.Reader, stdout io.Writer) {
 	c.stdout = stdout
 }
 
-// Connect connects to a WebSocket server and starts the terminal session
-func (c *Client) Connect() error {
-	// Connect to WebSocket server
-	origin := "http://localhost"
-	url := fmt.Sprintf("%s?token=%s", c.url, c.authToken)
-	ws, err := websocket.Dial(url, "", origin)
-	if err != nil {
-		return fmt.Errorf("failed to connect to server: %v", err)
-	}
-	defer ws.Close()
-
-	log.Debug.Printf("Connected to server at %s", ws.RemoteAddr())
-
-	// Wait for session ID
-	var msg struct {
-		Type      string `json:"type"`
-		SessionID string `json:"session_id"`
-	}
-	if err := websocket.JSON.Receive(ws, &msg); err != nil {
-		return fmt.Errorf("failed to receive session ID: %v", err)
-	}
-	if msg.Type != "session" {
-		return fmt.Errorf("expected session message, got %s", msg.Type)
-	}
-	c.sessionID = msg.SessionID
-
-	log.Debug.Printf("Session established %s with %s", c.sessionID, ws.RemoteAddr())
-
+// Connect establishes an H2 connection and starts the terminal session
+func (c *Client) Connect(ctx context.Context) error {
 	// Put terminal in raw mode if it's a real terminal
 	if f, ok := c.stdin.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
 		oldState, err := term.MakeRaw(int(f.Fd()))
@@ -73,26 +82,167 @@ func (c *Client) Connect() error {
 		defer term.Restore(int(f.Fd()), oldState)
 	}
 
-	// Forward data in both directions
-	errc := make(chan error, 1)
+	// Parse URL and add token
+	u, err := url.Parse(c.url)
+	if err != nil {
+		return fmt.Errorf("invalid URL: %v", err)
+	}
 
-	// stdin -> WebSocket
-	go func(ws *websocket.Conn, stdin io.Reader) {
-		_, err := io.Copy(ws, stdin)
-		errc <- err
-	}(ws, c.stdin)
+	// Convert ws:// to http://
+	if u.Scheme == "ws" {
+		u.Scheme = "http"
+	} else if u.Scheme == "wss" {
+		u.Scheme = "https"
+	}
 
-	// WebSocket -> stdout
-	go func(stdout io.Writer, ws *websocket.Conn) {
-		_, err := io.Copy(stdout, ws)
-		errc <- err
-	}(c.stdout, ws)
+	// Add path and token
+	u.Path = "/terminal"
+	q := u.Query()
+	q.Set("token", c.authToken)
+	u.RawQuery = q.Encode()
 
-	// Wait for either direction to finish
-	if err := <-errc; err != nil && err != io.EOF {
-		log.Debug.Printf("IO error %s with %s: %v", c.sessionID, ws.RemoteAddr(), err)
+	// Create pipe for stdin
+	pr, pw := io.Pipe()
+
+	// Start copying stdin to pipe
+	go func() {
+		io.Copy(pw, c.stdin)
+		pw.Close()
+	}()
+
+	// Create request with context for keepalive
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), pr)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %v", err)
+	}
+
+	// Start keepalive goroutine
+	keepaliveURL := *u
+	keepaliveURL.Path = "/ping"
+	keepaliveClient := c.client // Capture client reference
+	go func(ctx context.Context, url url.URL, client *http.Client) {
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				// Send a ping by making a HEAD request to /ping
+				pingReq, err := http.NewRequestWithContext(ctx, http.MethodHead, url.String(), nil)
+				if err != nil {
+					log.Debug.Printf("Failed to create ping request: %v", err)
+					continue
+				}
+				resp, err := client.Do(pingReq)
+				if err != nil {
+					log.Debug.Printf("Failed to send ping: %v", err)
+					continue
+				}
+				resp.Body.Close()
+			}
+		}
+	}(ctx, keepaliveURL, keepaliveClient)
+
+	// Send request
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to connect: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Read session ID
+	var msg struct {
+		Type      string `json:"type"`
+		SessionID string `json:"session_id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&msg); err != nil {
+		return fmt.Errorf("failed to get session ID: %v", err)
+	}
+	if msg.Type != "session" {
+		return fmt.Errorf("unexpected message type: %s", msg.Type)
+	}
+	c.sessionID = msg.SessionID
+
+	// Set up window size handling (platform specific)
+	c.setupWindowSizeHandler()
+
+	// Copy response to stdout
+	_, err = io.Copy(c.stdout, resp.Body)
+	if err != nil && err != io.EOF {
 		return fmt.Errorf("IO error: %v", err)
 	}
-	log.Debug.Printf("Connection closed %s with %s", c.sessionID, ws.RemoteAddr())
+
+	return nil
+}
+
+// handleWindowChanges handles window resize signals
+func (c *Client) handleWindowChanges(ch chan os.Signal) {
+	for range ch {
+		if err := c.sendWindowSize(); err != nil {
+			log.Debug.Printf("Failed to send window size: %v", err)
+		}
+	}
+}
+
+// sendWindowSize sends the current window size to the server
+func (c *Client) sendWindowSize() error {
+	rows, cols, xpixels, ypixels, err := c.getWindowSize()
+	if err != nil {
+		return fmt.Errorf("failed to get window size: %v", err)
+	}
+
+	// Construct URL for window size endpoint
+	u, err := url.Parse(c.url)
+	if err != nil {
+		return fmt.Errorf("invalid URL: %v", err)
+	}
+	if u.Scheme == "ws" {
+		u.Scheme = "http"
+	} else if u.Scheme == "wss" {
+		u.Scheme = "https"
+	}
+	u.Path = fmt.Sprintf("/session/%s/winsize", c.sessionID)
+	q := u.Query()
+	q.Set("token", c.authToken)
+	u.RawQuery = q.Encode()
+
+	// Send request
+	body := struct {
+		Rows    uint16 `json:"rows"`
+		Cols    uint16 `json:"cols"`
+		XPixels uint16 `json:"x_pixels"`
+		YPixels uint16 `json:"y_pixels"`
+	}{
+		Rows:    rows,
+		Cols:    cols,
+		XPixels: xpixels,
+		YPixels: ypixels,
+	}
+	jsonBody, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("failed to marshal window size: %v", err)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, u.String(), bytes.NewReader(jsonBody))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("server returned status %d", resp.StatusCode)
+	}
+
 	return nil
 }
