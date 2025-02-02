@@ -3,11 +3,13 @@ package core
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -47,6 +49,8 @@ func NewServer(port int) *Server {
 func (s *Server) Start() error {
 	// Set up WebSocket handler with auth wrapper
 	s.mux.Handle("/", s.withAuth(websocket.Handler(s.handleConnection)))
+	// Add window size endpoint
+	s.mux.Handle("/session/", s.withAuth(http.HandlerFunc(s.handleSessionControl)))
 
 	// Start HTTP server
 	addr := fmt.Sprintf(":%d", s.port)
@@ -152,6 +156,56 @@ func (s *Server) handleConnection(ws *websocket.Conn) {
 		log.Debug.Printf("IO error %s: %v", sessionID, err)
 	}
 	log.Info.Printf("Connection closed %s", sessionID)
+}
+
+// handleSessionControl handles session control HTTP endpoints
+func (s *Server) handleSessionControl(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Extract session ID from path
+	parts := strings.Split(r.URL.Path, "/")
+	if len(parts) != 4 || parts[1] != "session" || parts[3] != "winsize" {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+	sessionID := parts[2]
+
+	// Get PTY for session
+	ptmxVal, ok := s.ptys.Load(sessionID)
+	if !ok {
+		http.Error(w, "Session not found", http.StatusNotFound)
+		return
+	}
+	ptmx := ptmxVal.(*os.File)
+
+	// Parse window size from request
+	var ws struct {
+		Rows    uint16 `json:"rows"`
+		Cols    uint16 `json:"cols"`
+		XPixels uint16 `json:"x_pixels"`
+		YPixels uint16 `json:"y_pixels"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&ws); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// Set window size on PTY
+	if err := pty.Setsize(ptmx, &pty.Winsize{
+		Rows: ws.Rows,
+		Cols: ws.Cols,
+		X:    ws.XPixels,
+		Y:    ws.YPixels,
+	}); err != nil {
+		log.Debug.Printf("Failed to set window size for session %s: %v", sessionID, err)
+		http.Error(w, "Failed to set window size", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
 }
 
 // isConnectionClosed checks if an error is due to normal connection closure
