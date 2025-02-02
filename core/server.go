@@ -16,7 +16,9 @@ import (
 	"flyssh/core/log"
 
 	"github.com/creack/pty"
-	"golang.org/x/net/websocket"
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/h2c"
+	"golang.org/x/sync/errgroup"
 )
 
 // GenerateDevToken generates a random token for development mode
@@ -26,7 +28,7 @@ func GenerateDevToken() string {
 	return hex.EncodeToString(b)
 }
 
-// Server represents a WebSocket server that handles PTY connections
+// Server represents an H2C server that handles PTY connections
 type Server struct {
 	port         int
 	mux          *http.ServeMux
@@ -45,17 +47,24 @@ func NewServer(port int) *Server {
 	}
 }
 
-// Start starts the WebSocket server
+// Start starts the H2C server
 func (s *Server) Start() error {
-	// Set up WebSocket handler with auth wrapper
-	s.mux.Handle("/", s.withAuth(websocket.Handler(s.handleConnection)))
-	// Add window size endpoint
+	// Set up handlers with auth wrapper
+	s.mux.Handle("/terminal", s.withAuth(http.HandlerFunc(s.handleTerminalStream)))
 	s.mux.Handle("/session/", s.withAuth(http.HandlerFunc(s.handleSessionControl)))
 
-	// Start HTTP server
+	// Start HTTP server with H2C support
 	addr := fmt.Sprintf(":%d", s.port)
-	log.Info.Printf("Starting WebSocket server on %s", addr)
-	s.server = &http.Server{Addr: addr, Handler: s.mux}
+	log.Info.Printf("Starting H2C server on %s", addr)
+
+	h2server := &http2.Server{}
+	handler := h2c.NewHandler(s.mux, h2server)
+
+	s.server = &http.Server{
+		Addr:    addr,
+		Handler: handler,
+	}
+
 	return s.server.ListenAndServe()
 }
 
@@ -86,18 +95,26 @@ func (s *Server) withAuth(handler http.Handler) http.Handler {
 	})
 }
 
-// handleConnection handles a new WebSocket connection
-func (s *Server) handleConnection(ws *websocket.Conn) {
+// handleTerminalStream handles a new terminal connection
+func (s *Server) handleTerminalStream(w http.ResponseWriter, r *http.Request) {
+	// Ensure we can stream
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+
 	// Generate session ID
 	sessionID := fmt.Sprintf("#%d", atomic.AddUint64(&s.sessionCount, 1))
 
 	// Get connection details
-	remoteAddr := ws.Request().RemoteAddr
-	localAddr := ws.Request().Host
+	remoteAddr := r.RemoteAddr
+	localAddr := r.Host
 	log.Info.Printf("New connection %s from %s to %s", sessionID, remoteAddr, localAddr)
 
 	// Send session ID to client
-	if err := websocket.JSON.Send(ws, struct {
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(struct {
 		Type      string `json:"type"`
 		SessionID string `json:"session_id"`
 	}{
@@ -107,6 +124,7 @@ func (s *Server) handleConnection(ws *websocket.Conn) {
 		log.Info.Printf("Failed to send session ID: %v", err)
 		return
 	}
+	flusher.Flush()
 
 	// Start a new shell using /bin/sh
 	// This is intentionally using a basic shell for PTY functionality
@@ -125,7 +143,6 @@ func (s *Server) handleConnection(ws *websocket.Conn) {
 	ptmx, err := pty.Start(cmd)
 	if err != nil {
 		log.Info.Printf("Failed to start PTY: %v", err)
-		ws.Close()
 		return
 	}
 	defer func() {
@@ -133,26 +150,27 @@ func (s *Server) handleConnection(ws *websocket.Conn) {
 		s.ptys.Delete(sessionID)
 	}()
 
-	// Store PTY for future use (e.g., file upload channel)
+	// Store PTY for future use (e.g., window resize)
 	s.ptys.Store(sessionID, ptmx)
 
-	// Forward data in both directions
-	errc := make(chan error, 1)
+	// Use errgroup for clean goroutine management
+	g := errgroup.Group{}
 
 	// Terminal -> PTY
-	go func(ptmx *os.File, ws *websocket.Conn) {
-		_, err := io.Copy(ptmx, ws)
-		errc <- err
-	}(ptmx, ws)
+	g.Go(func() error {
+		_, err := io.Copy(ptmx, r.Body)
+		return err
+	})
 
 	// PTY -> Terminal
-	go func(ws *websocket.Conn, ptmx *os.File) {
-		_, err := io.Copy(ws, ptmx)
-		errc <- err
-	}(ws, ptmx)
+	g.Go(func() error {
+		_, err := io.Copy(w, ptmx)
+		flusher.Flush()
+		return err
+	})
 
 	// Wait for either direction to finish
-	if err := <-errc; err != nil && err != io.EOF && !isConnectionClosed(err) {
+	if err := g.Wait(); err != nil && err != io.EOF && !isConnectionClosed(err) {
 		log.Debug.Printf("IO error %s: %v", sessionID, err)
 	}
 	log.Info.Printf("Connection closed %s", sessionID)
@@ -211,8 +229,7 @@ func (s *Server) handleSessionControl(w http.ResponseWriter, r *http.Request) {
 // isConnectionClosed checks if an error is due to normal connection closure
 func isConnectionClosed(err error) bool {
 	return err.Error() == "use of closed network connection" ||
-		err.Error() == "EOF" ||
-		err.Error() == "websocket: close 1000 (normal)"
+		err.Error() == "EOF"
 }
 
 // Stop gracefully shuts down the server

@@ -2,9 +2,11 @@ package core
 
 import (
 	"bytes"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -14,7 +16,7 @@ import (
 	"flyssh/core/log"
 
 	"github.com/creack/pty"
-	"golang.org/x/net/websocket"
+	"golang.org/x/net/http2"
 	"golang.org/x/term"
 )
 
@@ -25,16 +27,27 @@ type Client struct {
 	stdin     io.Reader
 	stdout    io.Writer
 	sessionID string
-	ws        *websocket.Conn
+	client    *http.Client
 }
 
 // NewClient creates a new terminal client
 func NewClient(url string, authToken string) *Client {
+	// Create H2 client
+	client := &http.Client{
+		Transport: &http2.Transport{
+			AllowHTTP: true,
+			DialTLS: func(network, addr string, cfg *tls.Config) (net.Conn, error) {
+				return net.Dial(network, addr)
+			},
+		},
+	}
+
 	return &Client{
 		url:       url,
 		authToken: authToken,
 		stdin:     os.Stdin,
 		stdout:    os.Stdout,
+		client:    client,
 	}
 }
 
@@ -44,31 +57,64 @@ func (c *Client) SetIO(stdin io.Reader, stdout io.Writer) {
 	c.stdout = stdout
 }
 
-// Connect establishes a WebSocket connection and starts the terminal session
+// Connect establishes an H2 connection and starts the terminal session
 func (c *Client) Connect() error {
+	// Put terminal in raw mode if it's a real terminal
+	if f, ok := c.stdin.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
+		oldState, err := term.MakeRaw(int(f.Fd()))
+		if err != nil {
+			return fmt.Errorf("failed to set up terminal: %v", err)
+		}
+		defer term.Restore(int(f.Fd()), oldState)
+	}
+
 	// Parse URL and add token
 	u, err := url.Parse(c.url)
 	if err != nil {
 		return fmt.Errorf("invalid URL: %v", err)
 	}
+
+	// Convert ws:// to http://
+	if u.Scheme == "ws" {
+		u.Scheme = "http"
+	} else if u.Scheme == "wss" {
+		u.Scheme = "https"
+	}
+
+	// Add path and token
+	u.Path = "/terminal"
 	q := u.Query()
 	q.Set("token", c.authToken)
 	u.RawQuery = q.Encode()
 
-	// Connect to WebSocket server
-	origin := "http://" + u.Host
-	ws, err := websocket.Dial(u.String(), "", origin)
+	// Create pipe for stdin
+	pr, pw := io.Pipe()
+
+	// Start copying stdin to pipe
+	go func() {
+		io.Copy(pw, c.stdin)
+		pw.Close()
+	}()
+
+	// Create request
+	req, err := http.NewRequest(http.MethodPost, u.String(), pr)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %v", err)
+	}
+
+	// Send request
+	resp, err := c.client.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to connect: %v", err)
 	}
-	c.ws = ws
+	defer resp.Body.Close()
 
-	// Get session ID from server
+	// Read session ID
 	var msg struct {
 		Type      string `json:"type"`
 		SessionID string `json:"session_id"`
 	}
-	if err := websocket.JSON.Receive(ws, &msg); err != nil {
+	if err := json.NewDecoder(resp.Body).Decode(&msg); err != nil {
 		return fmt.Errorf("failed to get session ID: %v", err)
 	}
 	if msg.Type != "session" {
@@ -86,8 +132,13 @@ func (c *Client) Connect() error {
 		log.Debug.Printf("Failed to send initial window size: %v", err)
 	}
 
-	// Start terminal session
-	return c.startSession()
+	// Copy response to stdout
+	_, err = io.Copy(c.stdout, resp.Body)
+	if err != nil && err != io.EOF {
+		return fmt.Errorf("IO error: %v", err)
+	}
+
+	return nil
 }
 
 // handleWindowChanges handles window resize signals
@@ -111,7 +162,11 @@ func (c *Client) sendWindowSize() error {
 	if err != nil {
 		return fmt.Errorf("invalid URL: %v", err)
 	}
-	u.Scheme = "http"
+	if u.Scheme == "ws" {
+		u.Scheme = "http"
+	} else if u.Scheme == "wss" {
+		u.Scheme = "https"
+	}
 	u.Path = fmt.Sprintf("/session/%s/winsize", c.sessionID)
 	q := u.Query()
 	q.Set("token", c.authToken)
@@ -140,7 +195,7 @@ func (c *Client) sendWindowSize() error {
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := c.client.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to send request: %v", err)
 	}
@@ -150,40 +205,5 @@ func (c *Client) sendWindowSize() error {
 		return fmt.Errorf("server returned status %d", resp.StatusCode)
 	}
 
-	return nil
-}
-
-// startSession starts the terminal session
-func (c *Client) startSession() error {
-	// Put terminal in raw mode if it's a real terminal
-	if f, ok := c.stdin.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
-		oldState, err := term.MakeRaw(int(f.Fd()))
-		if err != nil {
-			return fmt.Errorf("failed to set up terminal: %v", err)
-		}
-		defer term.Restore(int(f.Fd()), oldState)
-	}
-
-	// Forward data in both directions
-	errc := make(chan error, 1)
-
-	// stdin -> WebSocket
-	go func(ws *websocket.Conn, stdin io.Reader) {
-		_, err := io.Copy(ws, stdin)
-		errc <- err
-	}(c.ws, c.stdin)
-
-	// WebSocket -> stdout
-	go func(stdout io.Writer, ws *websocket.Conn) {
-		_, err := io.Copy(stdout, ws)
-		errc <- err
-	}(c.stdout, c.ws)
-
-	// Wait for either direction to finish
-	if err := <-errc; err != nil && err != io.EOF {
-		log.Debug.Printf("IO error %s with %s: %v", c.sessionID, c.ws.RemoteAddr(), err)
-		return fmt.Errorf("IO error: %v", err)
-	}
-	log.Debug.Printf("Connection closed %s with %s", c.sessionID, c.ws.RemoteAddr())
 	return nil
 }
